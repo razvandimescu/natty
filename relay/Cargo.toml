@@ -1,0 +1,20 @@
+[package]
+name = "natty-relay"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+description = "Relay server for natty: key-addressed sessions, packet forwarding, STUN"
+repository = "https://github.com/razvandimescu/natty"
+categories = ["network-programming"]
+
+[lints]
+workspace = true
+
+[dependencies]
+natty = { path = "..", version = "0.0.0", default-features = false }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+
+[dev-dependencies]
+natty = { path = "..", features = ["quic"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
