@@ -366,6 +366,7 @@ async fn endpoints_punch_a_direct_path_that_carries_the_data() {
     let h = start(0, 16).await;
     let a = endpoint(&h, SecretKey::generate()).await;
     let b = endpoint(&h, SecretKey::generate()).await;
+    b.allow(a.public_key());
     let (dialed, accepted) = tokio::join!(a.connect(b.public_key()), async {
         b.accept().await.unwrap().await
     });
@@ -399,4 +400,35 @@ async fn endpoints_punch_a_direct_path_that_carries_the_data() {
         relayed < 16 * 1024,
         "{relayed} bytes still went through the relay"
     );
+}
+
+#[tokio::test]
+async fn unallowed_dialer_is_served_through_the_relay_only() {
+    let h = start(0, 16).await;
+    let a = endpoint(&h, SecretKey::generate()).await;
+    let b = endpoint(&h, SecretKey::generate()).await;
+    let (dialed, accepted) = tokio::join!(a.connect(b.public_key()), async {
+        b.accept().await.unwrap().await
+    });
+    let (conn, accepted) = (dialed.unwrap(), accepted.unwrap());
+
+    let payload = vec![7u8; 256 * 1024];
+    let ((), received) = tokio::join!(
+        async {
+            let mut send = conn.open_uni().await.unwrap();
+            send.write_all(&payload).await.unwrap();
+            send.finish().unwrap();
+            send.stopped().await.unwrap();
+        },
+        async {
+            let mut recv = accepted.accept_uni().await.unwrap();
+            recv.read_to_end(1 << 20).await.unwrap()
+        }
+    );
+    assert_eq!(received, payload);
+    // Longer than a punch, which the dialer starts at once.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(a.direct_addr(&b.public_key()), None);
+    assert_eq!(b.direct_addr(&a.public_key()), None);
+    assert!(forwarded_bytes(&h).await >= payload.len() as u64);
 }

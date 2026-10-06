@@ -98,9 +98,10 @@ impl Traversal {
                     .set_local(candidates, now, actions);
             }
             Packet::UdpPunch(from, data) => {
-                // Unverifiable noise costs a lookup, not a signature check.
+                // Checked before answering, so a key that is not allowed never
+                // hears from this socket; noise costs a lookup, not a signature.
                 let sender = signal::sender(&data);
-                if !sender.is_some_and(|key| self.paths.lock().unwrap().tracks(&key)) {
+                if !sender.is_some_and(|key| self.paths.lock().unwrap().allows(&key)) {
                     return;
                 }
                 match Message::open(&data) {

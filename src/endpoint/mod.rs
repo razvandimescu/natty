@@ -128,15 +128,28 @@ impl Endpoint {
             .direct(peer, Instant::now())
     }
 
-    /// Dials `peer` through the relay, and directly once a punch succeeds. The handshake fails unless the other
-    /// side proves it holds `peer`.
+    /// Lets `peer` learn this endpoint's addresses and try a direct path, now
+    /// or whenever it next sends. Without it a peer still connects, through
+    /// the relay only. Dialing allows the dialed key.
+    pub fn allow(&self, peer: PublicKey) {
+        self.socket.paths.lock().unwrap().allow(peer);
+    }
+
+    /// Withdraws [`allow`](Self::allow): punching stops and the direct path is
+    /// dropped, so open connections continue through the relay. Addresses the
+    /// peer already learned stay learned.
+    pub fn revoke(&self, peer: &PublicKey) {
+        self.socket.paths.lock().unwrap().revoke(peer);
+    }
+
+    /// Dials `peer` through the relay, and directly once a punch succeeds.
+    /// The handshake fails unless the other side proves it holds `peer`.
     pub async fn connect(&self, peer: PublicKey) -> io::Result<quinn::Connection> {
-        let addr = self
-            .socket
-            .paths
-            .lock()
-            .unwrap()
-            .touch(peer, Instant::now());
+        let addr = {
+            let mut paths = self.socket.paths.lock().unwrap();
+            paths.allow(peer);
+            paths.touch(peer, Instant::now())
+        };
         let config = self.tls.client_config(peer)?;
         self.quic
             .connect_with(config, addr, &peer.to_string())

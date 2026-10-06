@@ -31,6 +31,7 @@ async fn main() -> io::Result<()> {
             let peer =
                 natty::peer_key(&conn).ok_or_else(|| io::Error::other("peer without key"))?;
             eprintln!("accepted {peer}");
+            endpoint.allow(peer);
             let (send, mut recv) = conn.accept_bi().await.map_err(io::Error::other)?;
             recv.read_u8().await?;
             (endpoint, peer, conn, (send, recv))

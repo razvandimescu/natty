@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -25,6 +25,8 @@ const PEER_IDLE: Duration = Duration::from_secs(60);
 /// Keys cost nothing, so per-key gaps do not bound the probes sent to
 /// addresses a peer names; this does.
 const MAX_PUNCHES: usize = 8;
+/// Keys that are not allowed get relay routing only; this bounds how many.
+const MAX_UNALLOWED: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Action {
@@ -42,6 +44,9 @@ pub(crate) struct Paths {
     /// Owner of every address in any peer's `proven`; the two always agree.
     proven: HashMap<SocketAddr, SocketAddr>,
     local: Vec<SocketAddr>,
+    /// Keys that may learn our addresses and punch. Kept apart from `peers`,
+    /// so forgetting a key's routing never forgets the application's decision.
+    allowed: HashSet<PublicKey>,
 }
 
 #[derive(Debug)]
@@ -177,6 +182,9 @@ impl Paths {
     /// starts tracking a key.
     pub(crate) fn touch(&mut self, key: PublicKey, now: Instant) -> SocketAddr {
         let addr = virtual_addr(&key);
+        if !self.peers.contains_key(&addr) && !self.allowed.contains(&key) {
+            self.make_room_for_unallowed();
+        }
         let peer = self.peers.entry(addr).or_insert_with(|| Peer {
             key,
             seen: now,
@@ -213,8 +221,51 @@ impl Paths {
         Some((peer.key, direct))
     }
 
-    pub(crate) fn tracks(&self, key: &PublicKey) -> bool {
-        self.peers.contains_key(&virtual_addr(key))
+    /// Evicts the longest-silent key that is not allowed. Its relay
+    /// connections lose their route until it sends again.
+    fn make_room_for_unallowed(&mut self) {
+        let unallowed = || {
+            self.peers
+                .iter()
+                .filter(|(_, p)| !self.allowed.contains(&p.key))
+        };
+        if unallowed().count() < MAX_UNALLOWED {
+            return;
+        }
+        if let Some(addr) = unallowed().min_by_key(|(_, p)| p.seen).map(|(a, _)| *a) {
+            self.forget(&addr);
+        }
+    }
+
+    fn forget(&mut self, addr: &SocketAddr) {
+        if let Some(peer) = self.peers.remove(addr) {
+            for from in &peer.proven {
+                self.proven.remove(from);
+            }
+        }
+    }
+
+    pub(crate) fn allows(&self, key: &PublicKey) -> bool {
+        self.allowed.contains(key)
+    }
+
+    pub(crate) fn allow(&mut self, key: PublicKey) {
+        self.allowed.insert(key);
+    }
+
+    /// Ends traversal toward `key` and drops its direct path; its traffic
+    /// goes through the relay from the next datagram on.
+    pub(crate) fn revoke(&mut self, key: &PublicKey) {
+        self.allowed.remove(key);
+        if let Some(peer) = self.peers.get_mut(&virtual_addr(key)) {
+            for from in peer.proven.drain(..) {
+                self.proven.remove(&from);
+            }
+            peer.candidates.clear();
+            peer.direct = None;
+            peer.punch = None;
+            peer.punched = None;
+        }
     }
 
     pub(crate) fn direct(&self, key: &PublicKey, now: Instant) -> Option<SocketAddr> {
@@ -249,7 +300,7 @@ impl Paths {
         let idle = self
             .peers
             .iter()
-            .filter(|(_, p)| p.active(now) && p.punch.is_none())
+            .filter(|(_, p)| self.allowed.contains(&p.key) && p.active(now) && p.punch.is_none())
             .map(|(addr, _)| *addr)
             .collect();
         self.initiate(idle, now, out);
@@ -264,6 +315,9 @@ impl Paths {
         out: &mut Vec<Action>,
     ) {
         let room = self.has_room();
+        if !self.allowed.contains(&key) {
+            return;
+        }
         let Some(peer) = self.peers.get_mut(&virtual_addr(&key)) else {
             return;
         };
@@ -289,6 +343,9 @@ impl Paths {
     ) {
         let addr = virtual_addr(&key);
         let room = self.has_room();
+        if !self.allowed.contains(&key) {
+            return;
+        }
         let Some(peer) = self.peers.get_mut(&addr) else {
             return;
         };
@@ -309,6 +366,9 @@ impl Paths {
     /// A verified PROBE_ACK from `from`.
     pub(crate) fn on_ack(&mut self, key: PublicKey, from: SocketAddr, nonce: Nonce, now: Instant) {
         let addr = virtual_addr(&key);
+        if !self.allowed.contains(&key) {
+            return;
+        }
         let Some(peer) = self.peers.get_mut(&addr) else {
             return;
         };
@@ -351,7 +411,7 @@ impl Paths {
     }
 
     pub(crate) fn tick(&mut self, now: Instant, out: &mut Vec<Action>) {
-        let proven = &mut self.proven;
+        let (proven, allowed) = (&mut self.proven, &self.allowed);
         let mut initiating = Vec::new();
         self.peers.retain(|addr, peer| {
             let ipv6 = peer.direct.as_ref().is_some_and(|d| d.addr.is_ipv6());
@@ -364,7 +424,7 @@ impl Paths {
                 }
                 return false;
             }
-            if peer.wants_to_initiate(now) {
+            if allowed.contains(&peer.key) && peer.wants_to_initiate(now) {
                 initiating.push(*addr);
             }
             upkeep(peer, now, out);
@@ -442,10 +502,15 @@ mod tests {
             .collect()
     }
 
+    fn allowed(paths: &mut Paths, key: PublicKey, now: Instant) -> SocketAddr {
+        paths.allow(key);
+        paths.touch(key, now)
+    }
+
     /// A dialed peer whose candidates `v4` and `v6` arrived; returns the nonce.
     fn punching(paths: &mut Paths, key: PublicKey, now: Instant) -> Nonce {
         let (v4, v6) = (addr("198.51.100.1:1000"), addr("[2001:db8::1]:1000"));
-        let virt = paths.touch(key, now);
+        let virt = allowed(paths, key, now);
         let mut out = Vec::new();
         paths.tick(now, &mut out);
         assert_eq!(offers(&out), [true]);
@@ -573,7 +638,7 @@ mod tests {
         let key = PublicKey([5; 32]);
         let now = Instant::now();
         let mut out = Vec::new();
-        paths.touch(key, now);
+        allowed(&mut paths, key, now);
         paths.on_candidates(key, true, vec![], now, &mut out);
         assert_eq!(offers(&out), [false]);
 
@@ -616,14 +681,84 @@ mod tests {
     }
 
     #[test]
-    fn candidates_from_an_untracked_key_are_ignored() {
+    fn unallowed_key_is_routed_through_the_relay_and_nothing_else() {
         let mut paths = Paths::default();
         let key = PublicKey([8; 32]);
+        let now = Instant::now();
         let mut out = Vec::new();
-        let named = vec![addr("198.51.100.9:9")];
-        paths.on_candidates(key, true, named, Instant::now(), &mut out);
+        let virt = paths.touch(key, now);
+        assert_eq!(paths.route(&virt, now), Some((key, None)));
+
+        paths.tick(now, &mut out);
+        paths.relay_connected(now, &mut out);
+        let named = addr("198.51.100.9:9");
+        paths.on_candidates(key, true, vec![named], now, &mut out);
+        paths.on_probe(key, named, now, &mut out);
+        paths.on_ack(key, named, paths.peers[&virt].nonce, now);
+        paths.tick(now + TICK, &mut out);
         assert!(out.is_empty(), "{out:?}");
-        assert!(!paths.tracks(&key));
+        assert_eq!(paths.quic_from(named, now), None);
+        assert_eq!(paths.direct(&key, now), None);
+    }
+
+    #[test]
+    fn allowing_an_active_key_starts_a_punch() {
+        let mut paths = Paths::default();
+        let key = PublicKey([11; 32]);
+        let now = Instant::now();
+        let mut out = Vec::new();
+        paths.touch(key, now);
+        paths.tick(now, &mut out);
+        assert!(out.is_empty(), "{out:?}");
+
+        paths.allow(key);
+        paths.tick(now + TICK, &mut out);
+        assert_eq!(offers(&out), [true]);
+    }
+
+    #[test]
+    fn revoke_ends_traversal_and_the_direct_path() {
+        let mut paths = Paths::default();
+        let key = PublicKey([12; 32]);
+        let now = Instant::now();
+        let nonce = punching(&mut paths, key, now);
+        let v4 = addr("198.51.100.1:1000");
+        paths.on_ack(key, v4, nonce, now);
+        assert_eq!(paths.direct(&key, now), Some(v4));
+
+        paths.revoke(&key);
+        let virt = paths.touch(key, now);
+        assert_eq!(paths.route(&virt, now), Some((key, None)));
+        assert_eq!(paths.quic_from(v4, now), None);
+        let mut out = Vec::new();
+        paths.tick(now + TICK, &mut out);
+        paths.on_probe(key, v4, now + TICK, &mut out);
+        assert!(out.is_empty(), "{out:?}");
+    }
+
+    #[test]
+    fn unknown_key_churn_stays_bounded_and_keeps_allows() {
+        let mut paths = Paths::default();
+        let (friend, preloaded) = (PublicKey([13; 32]), PublicKey([14; 32]));
+        let start = Instant::now();
+        allowed(&mut paths, friend, start);
+        paths.allow(preloaded);
+
+        let mut now = start;
+        for i in 0..2 * MAX_UNALLOWED as u32 {
+            let mut key = [0; 32];
+            key[..4].copy_from_slice(&i.to_be_bytes());
+            now += Duration::from_millis(1);
+            paths.touch(PublicKey(key), now);
+            paths.touch(friend, now);
+        }
+        assert_eq!(paths.peers.len(), MAX_UNALLOWED + 1);
+        assert!(paths.peers.contains_key(&virtual_addr(&friend)));
+
+        paths.touch(preloaded, now);
+        let mut out = Vec::new();
+        paths.tick(now, &mut out);
+        assert_eq!(offers(&out), [true, true]);
     }
 
     #[test]
@@ -634,7 +769,7 @@ mod tests {
             .map(|i| PublicKey([100 + i; 32]))
             .collect();
         for key in &keys {
-            paths.touch(*key, now);
+            allowed(&mut paths, *key, now);
         }
         let mut out = Vec::new();
         paths.tick(now, &mut out);
@@ -663,7 +798,7 @@ mod tests {
         let mut out = Vec::new();
         let shared = addr("198.51.100.10:5000");
         for key in [a, b] {
-            paths.touch(key, now);
+            allowed(&mut paths, key, now);
             paths.on_probe(key, shared, now, &mut out);
         }
         for port in 1..=MAX_CANDIDATES as u16 {
@@ -679,13 +814,15 @@ mod tests {
         let key = PublicKey([6; 32]);
         let now = Instant::now();
         let mut out = Vec::new();
-        paths.touch(key, now);
+        allowed(&mut paths, key, now);
         paths.on_candidates(key, false, vec![], now, &mut out);
         let from = addr("198.51.100.8:4000");
         paths.on_probe(key, from, now, &mut out);
+        assert_eq!(paths.quic_from(from, now), Some(virtual_addr(&key)));
 
         paths.tick(now + PEER_IDLE, &mut out);
-        assert!(!paths.tracks(&key));
+        assert!(!paths.peers.contains_key(&virtual_addr(&key)));
         assert_eq!(paths.quic_from(from, now + PEER_IDLE), None);
+        assert!(paths.allows(&key), "forgetting routing keeps the allow");
     }
 }
