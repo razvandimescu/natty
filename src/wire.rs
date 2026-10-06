@@ -8,10 +8,13 @@ use tokio_rustls::rustls::{ConnectionCommon, ProtocolVersion};
 use crate::PublicKey;
 
 pub const UPGRADE: &str = "natty/1";
-pub const MAX_PAYLOAD: usize = 64 * 1024;
+/// One QUIC datagram at any MTU quinn discovers by default (1452) plus a key.
+/// The relay queues frames per session, so this bounds its memory.
+pub const MAX_PAYLOAD: usize = 2048;
 pub const MAX_DATAGRAM: usize = MAX_PAYLOAD - 32;
 const MAX_HTTP_HEAD: usize = 4096;
 const WRITE_BUF_RETAINED: usize = 4096;
+const COALESCE: usize = 64 * 1024;
 const EXPORTER_LABEL: &[u8] = b"EXPORTER-natty-relay-auth-v1";
 const AUTH_CONTEXT: &[u8] = b"natty relay auth v1\0";
 
@@ -228,7 +231,7 @@ pub async fn write_frames<W: AsyncWrite + Unpin>(
     while let Some(frame) = frames.recv().await {
         buf.clear();
         frame.encode(&mut buf);
-        while buf.len() < MAX_PAYLOAD {
+        while buf.len() < COALESCE {
             let Ok(next) = frames.try_recv() else { break };
             next.encode(&mut buf);
         }

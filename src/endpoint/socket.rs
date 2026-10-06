@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use super::net::Udp;
 use super::paths::Paths;
 use super::signal;
-use crate::wire::{canonical, Frame};
+use crate::wire::{canonical, Frame, MAX_DATAGRAM};
 use crate::{stun, PublicKey};
 
 pub(crate) type Datagram = (PublicKey, Vec<u8>);
@@ -84,7 +84,11 @@ impl AsyncUdpSocket for VirtualSocket {
                 return Ok(());
             }
         }
-        // A full queue drops the datagram, as a congested UDP socket would.
+        // Oversize datagrams are lost as above a link MTU, so MTU discovery
+        // backs off; a full queue drops, as a congested UDP socket would.
+        if transmit.contents.len() > MAX_DATAGRAM {
+            return Ok(());
+        }
         let data = transmit.contents.to_vec();
         let _ = self.relay.try_send(Frame::Send { dst, data });
         Ok(())
