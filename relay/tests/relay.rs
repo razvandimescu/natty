@@ -432,3 +432,19 @@ async fn unallowed_dialer_is_served_through_the_relay_only() {
     assert_eq!(b.direct_addr(&a.public_key()), None);
     assert!(forwarded_bytes(&h).await >= payload.len() as u64);
 }
+
+#[tokio::test]
+async fn idle_connection_outlives_the_quic_idle_timeout() {
+    let h = start(0, 16).await;
+    let a = endpoint(&h, SecretKey::generate()).await;
+    let b = endpoint(&h, SecretKey::generate()).await;
+    let (dialed, accepted) = tokio::join!(a.connect(b.public_key()), async {
+        b.accept().await.unwrap().await
+    });
+    let (conn, accepted) = (dialed.unwrap(), accepted.unwrap());
+
+    // quinn's default idle timeout is 30 s.
+    tokio::time::sleep(Duration::from_secs(33)).await;
+    assert_eq!(conn.close_reason(), None);
+    assert_eq!(accepted.close_reason(), None);
+}

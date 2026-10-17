@@ -1,5 +1,6 @@
 use std::io;
 use std::sync::Arc;
+use std::time::Duration;
 
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use tokio_rustls::rustls::client::danger::{
@@ -29,6 +30,7 @@ const SPKI_PREFIX: [u8; 12] = [
 const PKCS8_PREFIX: [u8; 16] = [
     0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
 ];
+const QUIC_KEEPALIVE: Duration = Duration::from_secs(15);
 
 /// Peers authenticate with RFC 7250 raw public keys: the Ed25519 key is the
 /// whole identity, so there is no certificate to build or chain to check.
@@ -64,7 +66,9 @@ impl PeerTls {
             )));
         tls.alpn_protocols = self.alpn.clone();
         let quic = QuicServerConfig::try_from(tls).map_err(io::Error::other)?;
-        Ok(quinn::ServerConfig::with_crypto(Arc::new(quic)))
+        let mut config = quinn::ServerConfig::with_crypto(Arc::new(quic));
+        config.transport_config(transport());
+        Ok(config)
     }
 
     pub(crate) fn client_config(&self, peer: PublicKey) -> io::Result<quinn::ClientConfig> {
@@ -78,7 +82,9 @@ impl PeerTls {
             )));
         tls.alpn_protocols = self.alpn.clone();
         let quic = QuicClientConfig::try_from(tls).map_err(io::Error::other)?;
-        Ok(quinn::ClientConfig::new(Arc::new(quic)))
+        let mut config = quinn::ClientConfig::new(Arc::new(quic));
+        config.transport_config(transport());
+        Ok(config)
     }
 
     fn verifier(&self, expected: Option<PublicKey>) -> PeerVerifier {
@@ -87,6 +93,12 @@ impl PeerTls {
             algorithms: self.provider.signature_verification_algorithms,
         }
     }
+}
+
+fn transport() -> Arc<quinn::TransportConfig> {
+    let mut transport = quinn::TransportConfig::default();
+    transport.keep_alive_interval(Some(QUIC_KEEPALIVE));
+    Arc::new(transport)
 }
 
 /// The key a connection's peer proved during the handshake.
