@@ -10,9 +10,9 @@ name = "natty"
 version = "0.0.0"
 edition = "2021"
 license = "MIT"
-description = "NAT traversal, no frameworks: rendezvous, hole punching, and relay fallback for key-addressed peers"
+description = "NAT traversal library: QUIC to a peer's public key, direct by hole punching or relayed"
 repository = "https://github.com/razvandimescu/natty"
-keywords = ["nat", "hole-punching", "relay", "p2p", "quic"]
+keywords = ["nat-traversal", "hole-punching", "relay", "p2p", "quic"]
 categories = ["network-programming"]
 
 [lints]
