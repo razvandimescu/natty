@@ -163,6 +163,14 @@ impl Endpoint {
     pub async fn accept(&self) -> Option<quinn::Incoming> {
         self.quic.accept().await
     }
+
+    /// Closes every connection and waits until the peers have been told, so
+    /// the process can exit right after. A process that exits without it
+    /// leaves its peers to wait out the idle timeout.
+    pub async fn close(&self) {
+        self.quic.close(0u32.into(), b"");
+        self.quic.wait_idle().await;
+    }
 }
 
 impl Drop for Endpoint {

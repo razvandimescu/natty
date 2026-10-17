@@ -72,7 +72,7 @@ async fn main() -> io::Result<()> {
             .direct_addr(&peer)
             .map_or("relay".to_owned(), |addr| format!("direct {addr}"))
     );
-    conn.close(0u32.into(), b"done");
+    endpoint.close().await;
     Ok(())
 }
 

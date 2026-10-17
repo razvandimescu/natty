@@ -448,3 +448,24 @@ async fn idle_connection_outlives_the_quic_idle_timeout() {
     assert_eq!(conn.close_reason(), None);
     assert_eq!(accepted.close_reason(), None);
 }
+
+#[tokio::test]
+async fn closed_endpoint_tells_its_peers_before_it_goes() {
+    let h = start(0, 16).await;
+    let a = endpoint(&h, SecretKey::generate()).await;
+    let b = endpoint(&h, SecretKey::generate()).await;
+    let (dialed, accepted) = tokio::join!(a.connect(b.public_key()), async {
+        b.accept().await.unwrap().await
+    });
+    let (_conn, accepted) = (dialed.unwrap(), accepted.unwrap());
+
+    a.close().await;
+    drop(a);
+    let reason = tokio::time::timeout(Duration::from_secs(5), accepted.closed())
+        .await
+        .expect("peer never heard the close");
+    assert!(matches!(
+        reason,
+        natty::quinn::ConnectionError::ApplicationClosed(_)
+    ));
+}
