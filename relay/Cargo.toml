@@ -2,7 +2,7 @@
 name = "natty-relay"
 version = "0.0.0"
 edition = "2021"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 description = "Relay server for natty: key-addressed sessions, packet forwarding, STUN"
 repository = "https://github.com/razvandimescu/natty"
 categories = ["network-programming"]
