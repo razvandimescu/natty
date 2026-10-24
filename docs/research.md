@@ -96,6 +96,8 @@ mapping without landing early at the far end. Needs a hop count per path and
 does not help when the NATs are few hops apart. Measure how common the
 behaviour is before building it.
 
+Measured 2026-10-24 on both routers: TTL 2 makes the local mapping and expires before the far end, and the reply from the far end then gets through with the port kept. See docs/results.md.
+
 ## QUIC-native traversal: not settled
 
 - draft-seemann-quic-nat-traversal-02: expired 2024-09, individual, never

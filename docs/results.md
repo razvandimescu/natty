@@ -4,6 +4,40 @@ Newest first. Each entry states the setup, what was measured, and what it
 changes. Numbers come from the probe logs of the run; re-measure before
 reusing them.
 
+## 2026-10-24: early-packet remapping confirmed, TTL-limited opener
+
+Setup: a laptop behind the home router and a Raspberry Pi 4 behind the office router, the same two routers as the 2026-09-15 entry. First, natty debug logs of a punch from the laptop to the Pi. Then a UDP reflector on the VPS with two ports, A and B, which reports the source port of each datagram. Each test run uses a new socket.
+
+Punch transcript: the candidates went through the relay in about 70 ms. Both sides started to probe within 10 ms of each other. No probe arrived on either side in 3 s, and both stayed on the relay. In STUN, both NATs kept the local port.
+
+Early-packet test, three runs per network. Control: send to A, then to B. Early: send to A, the VPS sends from B first, then send to B.
+
+| network | control: port at A and B | datagram from B | next datagram to B |
+|---|---|---|---|
+| home | local port at both | dropped | new port, 1105 then 1106 then 1107 |
+| office | local port at both | dropped | new port, 2402 then 2403 then 2404 |
+
+The new ports increase by one per run: the NAT gives the next free port.
+
+Opener test: send to A, send one datagram to B with TTL n, then the VPS sends from B.
+
+| TTL | reached the VPS | home | office |
+|---|---|---|---|
+| 1 | no | dropped, port changed | dropped, port changed |
+| 2 | no | received, port kept | received, port kept |
+| 3 | no | received, port kept | received, port kept |
+| 4 | no | received, port kept | received, port kept |
+| 64 | yes | received, port kept | received, port kept |
+
+Findings:
+
+1. Both NATs remap on an early packet, in all three runs on each network. This explains the failed punch: the first probe of each side arrives early at the other NAT.
+2. A datagram with TTL 2 goes through the local NAT, makes the mapping, and expires before the VPS. The ICMP time-exceeded reply does not remove the mapping. TTL 1 expires before the NAT and makes no mapping.
+3. If both sides send an opener before their probes, no probe arrives early. This predicts a direct path for this pair.
+4. natty with openers (TTL 2, probes 200 ms later): the same pair went direct. The first probe arrived 0.42 s after the punch started, and both sides had a direct path 0.49 s after it started. All later probes came from the offered ports. A peer that still ran natty without openers also went direct with the laptop, so an opener on one side was enough here.
+
+Not measured: double NAT or carrier-grade NAT, where TTL 2 expires before the outer NAT; peers a few hops apart, where the opener can arrive early at the far NAT; the IPv6 hop limit.
+
 ## 2026-09-15: direct path on real networks (Phase 3, partial)
 
 Setup: Phase 3 code. Relay on the Hetzner VPS (TLS on 4443, STUN on UDP 3478,

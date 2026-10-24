@@ -14,6 +14,9 @@ pub(crate) const TICK: Duration = Duration::from_millis(200);
 const ACTIVE: Duration = Duration::from_secs(5);
 const TRUST: Duration = Duration::from_secs(5);
 const PUNCH: Duration = Duration::from_secs(3);
+/// Openers lead the first probes by this much, so both sides' openers have
+/// left before either side's probes arrive.
+const OPENER_LEAD: Duration = Duration::from_millis(200);
 const OFFER_RETRY: Duration = Duration::from_secs(1);
 const REPLY_GAP: Duration = Duration::from_millis(500);
 const INITIATE_GAP: Duration = Duration::from_secs(60);
@@ -32,8 +35,21 @@ const MAX_UNALLOWED: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Action {
-    Offer { to: PublicKey, reply: bool },
-    Probe { to: SocketAddr, nonce: Nonce },
+    Offer {
+        to: PublicKey,
+        reply: bool,
+    },
+    Probe {
+        to: SocketAddr,
+        nonce: Nonce,
+    },
+    /// A probe sent with a TTL that expires past the local NAT: it opens the
+    /// mapping toward `to` without landing early at the far NAT, which makes
+    /// some NATs remap (docs/results.md, 2026-10-24).
+    Open {
+        to: SocketAddr,
+        nonce: Nonce,
+    },
 }
 
 /// Per-key path state shared by the virtual socket (which reads routes and
@@ -77,6 +93,7 @@ struct Punch {
     until: Instant,
     awaiting_answer: bool,
     next_offer: Instant,
+    probe_from: Instant,
 }
 
 pub(crate) fn elapsed(since: Option<Instant>, now: Instant, gap: Duration) -> bool {
@@ -134,25 +151,41 @@ impl Peer {
             until: now + PUNCH,
             awaiting_answer: initiator,
             next_offer: now + OFFER_RETRY,
+            probe_from: now + OPENER_LEAD,
         });
         self.punched = Some(now);
         self.offer(initiator, now, out);
-        self.probe_candidates(out);
+        self.open(self.targets(), now, out);
     }
 
     /// Offered candidates, then addresses learned from probes, which outlive
     /// the offer they did not appear in.
-    fn probe_candidates(&self, out: &mut Vec<Action>) {
+    fn targets(&self) -> Vec<SocketAddr> {
         let learned = self.proven.iter().filter(|a| !self.candidates.contains(a));
+        self.candidates.iter().chain(learned).copied().collect()
+    }
+
+    fn probe_candidates(&self, out: &mut Vec<Action>) {
+        let nonce = self.nonce;
         out.extend(
-            self.candidates
-                .iter()
-                .chain(learned)
-                .map(|&to| Action::Probe {
-                    to,
-                    nonce: self.nonce,
-                }),
+            self.targets()
+                .into_iter()
+                .map(|to| Action::Probe { to, nonce }),
         );
+    }
+
+    /// Opens `addrs` during a punch and holds probing back until the openers
+    /// have left.
+    fn open(&mut self, addrs: Vec<SocketAddr>, now: Instant, out: &mut Vec<Action>) {
+        let nonce = self.nonce;
+        let Some(punch) = &mut self.punch else {
+            return;
+        };
+        if addrs.is_empty() {
+            return;
+        }
+        punch.probe_from = punch.probe_from.max(now + OPENER_LEAD);
+        out.extend(addrs.into_iter().map(|to| Action::Open { to, nonce }));
     }
 
     fn knows(&self, addr: &SocketAddr) -> bool {
@@ -331,7 +364,13 @@ impl Paths {
         let Some(peer) = self.peers.get_mut(&virtual_addr(&key)) else {
             return;
         };
-        peer.candidates = sanitize(addrs);
+        let addrs = sanitize(addrs);
+        let fresh = addrs
+            .iter()
+            .filter(|a| !peer.candidates.contains(a))
+            .copied()
+            .collect();
+        peer.candidates = addrs;
         debug!("candidates from {key}: {:?}", peer.candidates);
         if let Some(punch) = &mut peer.punch {
             punch.awaiting_answer = false;
@@ -339,6 +378,7 @@ impl Paths {
             peer.start_punch(false, now, out);
             return;
         }
+        peer.open(fresh, now, out);
         if reply && elapsed(peer.offered, now, REPLY_GAP) {
             peer.offer(false, now, out);
         }
@@ -467,11 +507,14 @@ impl Paths {
 
 fn upkeep(peer: &mut Peer, now: Instant, out: &mut Vec<Action>) {
     if let Some(punch) = &mut peer.punch {
+        let probing = now >= punch.probe_from;
         if punch.awaiting_answer && now >= punch.next_offer {
             punch.next_offer = now + OFFER_RETRY;
             peer.offer(true, now, out);
         }
-        peer.probe_candidates(out);
+        if probing {
+            peer.probe_candidates(out);
+        }
     }
 
     let active = peer.active(now);
@@ -511,7 +554,16 @@ mod tests {
         out.iter()
             .filter_map(|a| match a {
                 Action::Probe { to, .. } => Some(*to),
-                Action::Offer { .. } => None,
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn openers(out: &[Action]) -> Vec<SocketAddr> {
+        out.iter()
+            .filter_map(|a| match a {
+                Action::Open { to, .. } => Some(*to),
+                _ => None,
             })
             .collect()
     }
@@ -529,7 +581,7 @@ mod tests {
         out.iter()
             .filter_map(|a| match a {
                 Action::Offer { reply, .. } => Some(*reply),
-                Action::Probe { .. } => None,
+                _ => None,
             })
             .collect()
     }
@@ -549,6 +601,8 @@ mod tests {
         out.clear();
         paths.on_candidates(key, false, vec![v4, v6], now, &mut out);
         assert!(offers(&out).is_empty(), "an answer is not answered");
+        assert_eq!(openers(&out), [v6, v4]);
+        assert!(probes(&out).is_empty(), "probes wait for the openers");
         assert_eq!(paths.route(&virt, now), Some((key, None)));
         paths.tick(now + TICK, &mut out);
         assert_eq!(probes(&out), [v6, v4]);
@@ -819,7 +873,29 @@ mod tests {
 
         out.clear();
         paths.tick(now + PUNCH, &mut out);
+        assert_eq!(openers(&out), [addr("198.51.100.9:9")]);
+        paths.tick(now + PUNCH + OPENER_LEAD, &mut out);
         assert!(probes(&out).contains(&addr("198.51.100.9:9")));
+    }
+
+    #[test]
+    fn a_responder_opens_before_it_probes() {
+        let mut paths = Paths::default();
+        let key = PublicKey([15; 32]);
+        let now = Instant::now();
+        let v4 = addr("198.51.100.1:1000");
+        allowed(&mut paths, key, now);
+        let mut out = Vec::new();
+        paths.on_candidates(key, true, vec![v4], now, &mut out);
+        assert_eq!(offers(&out), [false]);
+        assert_eq!(openers(&out), [v4]);
+        assert!(probes(&out).is_empty());
+
+        out.clear();
+        paths.tick(now + OPENER_LEAD - Duration::from_millis(1), &mut out);
+        assert!(probes(&out).is_empty(), "{out:?}");
+        paths.tick(now + OPENER_LEAD, &mut out);
+        assert_eq!(probes(&out), [v4]);
     }
 
     #[test]

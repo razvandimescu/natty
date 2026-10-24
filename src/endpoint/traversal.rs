@@ -20,6 +20,8 @@ const STUN_REFRESH: Duration = Duration::from_secs(30);
 const STUN_ATTEMPTS: u32 = 3;
 const STUN_RETRY: Duration = Duration::from_millis(500);
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
+/// Past a NAT on the first hop, short of a peer many hops away.
+const OPENER_TTL: u32 = 2;
 
 pub(crate) struct Traversal {
     pub secret: SecretKey,
@@ -149,13 +151,18 @@ impl Traversal {
                     trace!("candidates to {to}: {local:?}");
                     let _ = self.relay.try_send(Frame::Send { dst: to, data });
                 }
-                Action::Probe { to, nonce } => {
+                Action::Probe { to, nonce } | Action::Open { to, nonce } => {
                     let (_, probe) = match &mut sealed {
                         Some(cached) if cached.0 == nonce => cached,
                         slot => slot.insert((nonce, Message::Probe(nonce).seal(&self.secret))),
                     };
-                    trace!("probe to {to}");
-                    self.udp.send_to(probe, to);
+                    if matches!(action, Action::Open { .. }) {
+                        trace!("opener to {to}");
+                        self.udp.send_with_ttl(probe, to, OPENER_TTL);
+                    } else {
+                        trace!("probe to {to}");
+                        self.udp.send_to(probe, to);
+                    }
                 }
             }
         }

@@ -48,6 +48,22 @@ impl Udp {
         }
     }
 
+    /// IPv4 only; other destinations are skipped. The TTL belongs to the
+    /// socket, so a QUIC datagram sent in the same instant can leave with it
+    /// and be lost, which QUIC repairs.
+    pub(crate) fn send_with_ttl(&self, data: &[u8], to: SocketAddr, ttl: u32) {
+        if !to.is_ipv4() {
+            return;
+        }
+        let Ok(old) = self.v4.ttl() else {
+            return;
+        };
+        if self.v4.set_ttl(ttl).is_ok() {
+            let _ = self.v4.try_send_to(data, to);
+            let _ = self.v4.set_ttl(old);
+        }
+    }
+
     /// Local candidates: the default-route address of each family with the
     /// port of that family's socket.
     pub(crate) fn local_candidates(&self) -> Vec<SocketAddr> {
