@@ -310,9 +310,9 @@ impl Paths {
         }
     }
 
-    pub(crate) fn direct(&self, key: &PublicKey, now: Instant) -> Option<SocketAddr> {
-        let direct = self.peers.get(&virtual_addr(key))?.direct.as_ref()?;
-        direct.trusted(now).then_some(direct.addr)
+    pub(crate) fn direct(&self, key: &PublicKey) -> Option<SocketAddr> {
+        let peer = self.peers.get(&virtual_addr(key))?;
+        peer.direct.as_ref().map(|direct| direct.addr)
     }
 
     pub(crate) fn local(&self) -> &[SocketAddr] {
@@ -618,20 +618,16 @@ mod tests {
         let v4 = addr("198.51.100.1:1000");
 
         paths.on_ack(key, addr("203.0.113.9:1000"), nonce, now);
-        assert_eq!(paths.direct(&key, now), None, "ACK from a non-candidate");
+        assert_eq!(paths.direct(&key), None, "ACK from a non-candidate");
 
         paths.on_ack(key, v4, nonce, now);
-        assert_eq!(paths.direct(&key, now), Some(v4));
+        assert_eq!(paths.direct(&key), Some(v4));
         assert_eq!(paths.quic_from(v4, now), Some(virtual_addr(&key)));
         assert_eq!(paths.quic_from(addr("203.0.113.9:1000"), now), None);
 
         let v6 = addr("[2001:db8::1]:1000");
         paths.on_ack(key, v6, nonce, now);
-        assert_eq!(
-            paths.direct(&key, now),
-            Some(v4),
-            "a used nonce counts once"
-        );
+        assert_eq!(paths.direct(&key), Some(v4), "a used nonce counts once");
     }
 
     #[test]
@@ -646,7 +642,7 @@ mod tests {
         paths.tick(now + TICK * 2, &mut out);
         let v6 = addr("[2001:db8::1]:1000");
         paths.on_ack(key, v6, nonce_for(&out, v6), now + TICK * 2);
-        assert_eq!(paths.direct(&key, now), Some(v6));
+        assert_eq!(paths.direct(&key), Some(v6));
 
         out.clear();
         paths.tick(now + TICK * 3, &mut out);
@@ -672,6 +668,11 @@ mod tests {
         }
         assert!(now - start >= TRUST);
         assert_eq!(paths.route(&virt, now), Some((key, Some((v4, false)))));
+        assert_eq!(
+            paths.direct(&key),
+            Some(v4),
+            "datagrams still go to an untrusted path"
+        );
 
         out.clear();
         while paths.route(&virt, now).unwrap().1.is_some() {
@@ -684,6 +685,7 @@ mod tests {
             [v4; 4],
             "one probe a second until the timeout"
         );
+        assert_eq!(paths.direct(&key), None);
 
         out.clear();
         paths.tick(now + TICK, &mut out);
@@ -747,7 +749,7 @@ mod tests {
         let mut out = Vec::new();
         paths.on_probe(key, learned, now, &mut out);
         paths.on_ack(key, learned, nonce, now);
-        assert_eq!(paths.direct(&key, now), Some(learned));
+        assert_eq!(paths.direct(&key), Some(learned));
 
         paths.on_candidates(key, true, vec![addr("198.51.100.1:1000")], now, &mut out);
         let later = now + KEEPALIVE;
@@ -784,7 +786,7 @@ mod tests {
         paths.tick(now + TICK, &mut out);
         assert!(out.is_empty(), "{out:?}");
         assert_eq!(paths.quic_from(named, now), None);
-        assert_eq!(paths.direct(&key, now), None);
+        assert_eq!(paths.direct(&key), None);
     }
 
     #[test]
@@ -810,7 +812,7 @@ mod tests {
         let nonce = punching(&mut paths, key, now);
         let v4 = addr("198.51.100.1:1000");
         paths.on_ack(key, v4, nonce, now);
-        assert_eq!(paths.direct(&key, now), Some(v4));
+        assert_eq!(paths.direct(&key), Some(v4));
 
         paths.revoke(&key);
         let virt = paths.touch(key, now);

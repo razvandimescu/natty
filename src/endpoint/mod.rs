@@ -118,14 +118,12 @@ impl Endpoint {
         self.relay_state.clone()
     }
 
-    /// The peer's direct UDP address while that path is trusted; `None` while
-    /// datagrams to the peer go through the relay.
+    /// The peer's direct UDP address while a direct path exists; `None` while
+    /// datagrams go through the relay only. A path that has gone quiet still
+    /// gets every datagram, plus a copy through the relay until the peer is
+    /// heard on it again.
     pub fn direct_addr(&self, peer: &PublicKey) -> Option<SocketAddr> {
-        self.socket
-            .paths
-            .lock()
-            .unwrap()
-            .direct(peer, Instant::now())
+        self.socket.paths.lock().unwrap().direct(peer)
     }
 
     /// Lets `peer` learn this endpoint's addresses and try a direct path, now
