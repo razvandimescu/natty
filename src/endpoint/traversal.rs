@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use log::{debug, trace};
 use tokio::net::lookup_host;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
@@ -91,6 +92,7 @@ impl Traversal {
                 if slot.replace(mapped) == Some(mapped) {
                     return;
                 }
+                debug!("stun: mapped {mapped}");
                 let candidates = self.candidates(stun);
                 self.paths
                     .lock()
@@ -144,6 +146,7 @@ impl Traversal {
                         addrs: local.clone(),
                     };
                     let data = message.seal(&self.secret);
+                    trace!("candidates to {to}: {local:?}");
                     let _ = self.relay.try_send(Frame::Send { dst: to, data });
                 }
                 Action::Probe { to, nonce } => {
@@ -151,6 +154,7 @@ impl Traversal {
                         Some(cached) if cached.0 == nonce => cached,
                         slot => slot.insert((nonce, Message::Probe(nonce).seal(&self.secret))),
                     };
+                    trace!("probe to {to}");
                     self.udp.send_to(probe, to);
                 }
             }

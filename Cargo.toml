@@ -20,9 +20,10 @@ workspace = true
 
 [features]
 default = ["quic"]
-quic = ["dep:quinn", "tokio/macros", "tokio/rt", "tokio/time"]
+quic = ["dep:quinn", "dep:log", "tokio/macros", "tokio/rt", "tokio/time"]
 
 [dependencies]
+log = { version = "0.4", optional = true }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"], optional = true }
 ring = "0.17"
 tokio = { version = "1", features = ["io-util", "net", "sync"] }

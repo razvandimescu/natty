@@ -2,6 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use log::debug;
+
 use super::signal::{Nonce, MAX_CANDIDATES};
 use super::socket::virtual_addr;
 use crate::key::random;
@@ -121,6 +123,13 @@ impl Peer {
     }
 
     fn start_punch(&mut self, initiator: bool, now: Instant, out: &mut Vec<Action>) {
+        debug!(
+            "punch {}: start ({}), candidates {:?}, learned {:?}",
+            self.key,
+            if initiator { "initiator" } else { "responder" },
+            self.candidates,
+            self.proven
+        );
         self.punch = Some(Punch {
             until: now + PUNCH,
             awaiting_answer: initiator,
@@ -287,6 +296,7 @@ impl Paths {
         if addrs == self.local {
             return;
         }
+        debug!("local candidates {addrs:?}");
         self.local = addrs;
         for peer in self.peers.values_mut() {
             if let Some(punch) = &peer.punch {
@@ -322,6 +332,7 @@ impl Paths {
             return;
         };
         peer.candidates = sanitize(addrs);
+        debug!("candidates from {key}: {:?}", peer.candidates);
         if let Some(punch) = &mut peer.punch {
             punch.awaiting_answer = false;
         } else if room && elapsed(peer.punched, now, RESPOND_GAP) {
@@ -349,6 +360,14 @@ impl Paths {
         let Some(peer) = self.peers.get_mut(&addr) else {
             return;
         };
+        debug!(
+            "probe from {key} at {from}{}",
+            if peer.knows(&from) {
+                ""
+            } else {
+                " (not a candidate it offered)"
+            }
+        );
         let respond = !peer.knows(&from)
             && peer.direct.is_none()
             && peer.punch.is_none()
@@ -373,6 +392,14 @@ impl Paths {
             return;
         };
         if nonce != peer.nonce || !peer.knows(&from) {
+            debug!(
+                "ack from {key} at {from} ignored: {}",
+                if nonce != peer.nonce {
+                    "stale nonce"
+                } else {
+                    "unknown address"
+                }
+            );
             return;
         }
         peer.nonce = random();
@@ -380,6 +407,7 @@ impl Paths {
             d.addr != from && (!d.trusted(now) || (from.is_ipv6() && d.addr.is_ipv4()))
         });
         if switch {
+            debug!("direct path to {key}: {from}");
             peer.direct = Some(Direct {
                 addr: from,
                 heard: now,
@@ -416,7 +444,10 @@ impl Paths {
         self.peers.retain(|addr, peer| {
             let ipv6 = peer.direct.as_ref().is_some_and(|d| d.addr.is_ipv6());
             if ipv6 || peer.punch.as_ref().is_some_and(|p| now >= p.until) {
-                peer.punch = None;
+                let ended = peer.punch.take().is_some();
+                if ended && peer.direct.is_none() {
+                    debug!("punch {}: no answer, staying on the relay", peer.key);
+                }
             }
             if peer.punch.is_none() && now.saturating_duration_since(peer.seen) >= PEER_IDLE {
                 for from in &peer.proven {
@@ -451,6 +482,7 @@ fn upkeep(peer: &mut Peer, now: Instant, out: &mut Vec<Action>) {
         .unanswered
         .is_some_and(|t| now.saturating_duration_since(t) >= PATH_TIMEOUT)
     {
+        debug!("direct path to {} via {} lost", peer.key, direct.addr);
         peer.direct = None;
         peer.punched = None;
         return;
