@@ -17,6 +17,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: rustup component add rustfmt clippy
+      # Also caches ~/.cargo/bin, so cargo-audit compiles once, not on every run.
+      - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-audit --locked
       - run: make lint
       - run: make test
