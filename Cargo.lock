@@ -264,7 +264,7 @@ dependencies = [
 
 [[package]]
 name = "natty"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "log",
  "quinn",
@@ -276,7 +276,7 @@ dependencies = [
 
 [[package]]
 name = "natty-relay"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "natty",
  "rcgen",
