@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly, so a new RustSec advisory shows up without a push.
+  schedule:
+    - cron: '0 6 * * 1'
 
 permissions:
   contents: read
@@ -14,5 +17,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: rustup component add rustfmt clippy
+      - run: cargo install cargo-audit --locked
       - run: make lint
       - run: make test
