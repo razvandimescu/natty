@@ -4,13 +4,14 @@
 //! Both sides copy stdin to the peer and the peer to stdout, then report
 //! bytes, throughput, QUIC's RTT estimate, and the path on stderr.
 //! NATTY_CA=<pem> adds a trusted root, for relays with self-signed certs.
+//! NATTY_KEY=<file> keeps the same key, and so the same address, across runs.
 
 mod common;
 
 use std::io;
 use std::time::Instant;
 
-use natty::{Endpoint, PublicKey, SecretKey};
+use natty::{Endpoint, PublicKey};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const ALPN: &[u8] = b"natty-pipe/1";
@@ -77,7 +78,7 @@ async fn main() -> io::Result<()> {
 }
 
 async fn bind(relay: &str) -> io::Result<Endpoint> {
-    let endpoint = Endpoint::bind(SecretKey::generate(), relay, common::relay_tls()?, &[ALPN])?;
+    let endpoint = Endpoint::bind(common::secret_key()?, relay, common::relay_tls()?, &[ALPN])?;
     endpoint
         .relay_state()
         .wait_for(Option::is_some)

@@ -5,6 +5,7 @@
 //! peer key it also sends a numbered message each interval. Lines start with
 //! Unix time so logs from different machines line up.
 //! NATTY_CA=<pem> adds a trusted root, for relays with self-signed certs.
+//! NATTY_KEY=<file> keeps the same key, and so the same address, across runs.
 
 mod common;
 
@@ -155,7 +156,7 @@ fn parse_args() -> Result<Probe, String> {
     Ok(Probe {
         tls,
         relay: relay.clone(),
-        key: SecretKey::generate(),
+        key: common::secret_key().map_err(|e| e.to_string())?,
         peer,
         interval: Duration::from_secs(interval),
         start: Instant::now(),
