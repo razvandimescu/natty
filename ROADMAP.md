@@ -22,6 +22,9 @@ fallback. IPv6 candidates go first.
 Measured on 2026-09-15: a direct path through one NAT. Two NATs that remap on an
 early packet stayed relayed.
 
+Measured on 2026-10-24: with a TTL-2 opener before the probes, the same two NATs
+got a direct path in about 0.5 s.
+
 Gate: the four cases below pass on networks without early-packet remapping.
 Each entry records the NAT types. The relay-path half passed on 2026-09-15
 (home to cellular).
