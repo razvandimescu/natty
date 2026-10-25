@@ -178,6 +178,9 @@ The [Dockerfile](Dockerfile) builds a static relay image.
 
 ## How it works
 
+[An animated walk-through](https://razvandimescu.github.io/natty/how-it-works.html)
+shows one connection, step by step.
+
 Each endpoint has an Ed25519 key and one TLS session to a relay. A peer address
 is `<key>@<relay-host[:port]>`.
 

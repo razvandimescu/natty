@@ -1,0 +1,771 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How natty finds a path to a peer</title>
+<script>document.documentElement.className = 'js'</script>
+<link rel="preconnect" href="https://fonts.bunny.net">
+<link rel="stylesheet" href="https://fonts.bunny.net/css?family=newsreader:400,400i,500|ibm-plex-mono:400,500&display=swap">
+<style>
+:root {
+  --paper: #f1ede2;
+  --tape: #faf7ef;
+  --ink: #1c2431;
+  --soft: #5d6677;
+  --faint: #a3a9b3;
+  --grid: rgba(44, 82, 140, .07);
+  --grid-major: rgba(44, 82, 140, .13);
+  --relay: #2c5aa0;
+  --accent: #d4461c;
+  --net: rgba(44, 82, 140, .05);
+  --serif: "Newsreader", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #0f2742;
+    --tape: #133050;
+    --ink: #e8edf3;
+    --soft: #9eb0c7;
+    --faint: #5b7596;
+    --grid: rgba(180, 210, 255, .06);
+    --grid-major: rgba(180, 210, 255, .11);
+    --relay: #8db4ff;
+    --accent: #ff8a45;
+    --net: rgba(180, 210, 255, .045);
+  }
+}
+
+* { box-sizing: border-box; }
+html { color-scheme: light dark; }
+body {
+  margin: 0;
+  color: var(--ink);
+  font: 19px/1.5 var(--serif);
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(var(--grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px),
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 120px 120px, 120px 120px, 24px 24px, 24px 24px;
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: .22;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .55 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+@media (prefers-color-scheme: dark) { body::before { opacity: .1; mix-blend-mode: screen; } }
+
+a { color: inherit; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+code { font: .8em var(--mono); padding: 1px 5px; background: color-mix(in srgb, var(--ink) 7%, transparent); }
+
+.masthead, .stage, .colophon {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding-inline: 32px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  column-gap: 48px;
+}
+.masthead { padding-top: 56px; padding-bottom: 12px; }
+.eyebrow {
+  grid-column: 1 / -1;
+  margin: 0;
+  font: 500 12px/1 var(--mono);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--soft);
+}
+.gh { margin-left: 6px; color: var(--soft); text-decoration: none; }
+.gh:hover { color: var(--ink); }
+.gh svg { width: 15px; height: 15px; vertical-align: -3px; fill: currentColor; }
+h1 {
+  margin: 18px 0 0;
+  max-width: 13ch;
+  font-weight: 400;
+  font-size: clamp(42px, 6.4vw, 84px);
+  line-height: .96;
+  letter-spacing: -.025em;
+}
+h1 em { color: var(--accent); }
+.lede { align-self: end; margin: 0 0 8px; font-size: 19px; color: var(--soft); }
+
+.stage { grid-template-areas: "figure ledger" "walk ledger"; padding-bottom: 56px; }
+.figure { grid-area: figure; margin: 0; }
+.walk { grid-area: walk; }
+.ledger { grid-area: ledger; align-self: start; position: sticky; top: 24px; margin-top: 36px; }
+
+/* Short enough that the step rail below it is on the first screen. */
+#map { display: block; width: 100%; height: auto; max-height: calc(100vh - 370px); }
+#map text { font-family: var(--mono); font-size: 15px; fill: var(--ink); }
+#map .t-serif { font-family: var(--serif); font-style: italic; font-size: 28px; }
+#map .t-small { font-size: 12.5px; letter-spacing: .12em; }
+#map .t-soft { fill: var(--soft); }
+#map .t-relay { fill: var(--relay); }
+
+.hatch-bg { fill: var(--paper); }
+.hatch-line { stroke: var(--ink); stroke-width: 1.3; opacity: .55; }
+.net { fill: var(--net); }
+.wall { fill: none; stroke: url(#hatch); stroke-width: 14; }
+.edge { fill: none; stroke: var(--ink); stroke-width: 1; }
+.gap, .door-gap { fill: var(--paper); }
+.jamb { stroke: var(--ink); stroke-width: 1; }
+.relay-box { fill: var(--tape); stroke: var(--ink); stroke-width: 1.5; }
+.relay-inner { fill: none; stroke: var(--ink); stroke-width: .7; }
+.device { fill: var(--tape); stroke: var(--ink); stroke-width: 1.5; stroke-linejoin: round; }
+
+.pipe { fill: none; stroke: var(--ink); stroke-width: 6; }
+.pipe-core { fill: none; stroke: var(--paper); stroke-width: 2.6; }
+.pipes { transition: opacity .5s; }
+#map[data-step="4"] .pipes { opacity: .45; }
+.draw { stroke-dasharray: var(--len); }
+#map[data-step="0"] .pipes .draw { animation: draw 1.1s cubic-bezier(.6, 0, .3, 1) both; }
+@keyframes draw { from { stroke-dashoffset: var(--len); } to { stroke-dashoffset: 0; } }
+
+.stun-line { fill: none; stroke: var(--relay); stroke-width: 1.3; stroke-dasharray: 2 5; opacity: 0; transition: opacity .4s; }
+#map[data-step="2"] .stun-line { opacity: .9; }
+.stun-gap { opacity: 0; transition: opacity .25s; }
+.gap-you .stun-gap.you, .gap-bea .stun-gap.bea { opacity: 1; }
+
+.direct { fill: none; stroke: var(--faint); stroke-width: 1.5; stroke-dasharray: 3 7; opacity: 0; transition: opacity .4s; }
+.direct-try .direct, .direct-fail .direct { opacity: 1; }
+.direct-solid { fill: none; stroke: var(--accent); stroke-width: 4; opacity: 0; }
+.direct-up .direct-solid { opacity: 1; animation: draw .6s ease-out both; }
+
+.door-gap { opacity: 0; transition: opacity .2s; }
+.flap { stroke: var(--ink); stroke-width: 3; stroke-linecap: round; transform-box: view-box; transition: transform .5s cubic-bezier(.3, 1.5, .5, 1); }
+.door-you .door.you .door-gap, .door-bea .door.bea .door-gap { opacity: 1; }
+.door-you .door.you .flap { transform: rotate(-58deg); }
+.door-bea .door.bea .flap { transform: rotate(58deg); }
+
+.pub, .noanswer, .cap { opacity: 0; transition: opacity .4s; }
+.pub-you .pub.you, .pub-bea .pub.bea, .direct-fail .noanswer, #map[data-step="5"] .cap { opacity: 1; }
+#pathlabel { font-size: 16px; font-weight: 500; letter-spacing: .02em; }
+.direct-up #pathlabel { fill: var(--accent); }
+
+.glyph.quic rect { fill: var(--ink); }
+.glyph.ping circle { fill: var(--soft); }
+.glyph.stun circle { fill: var(--paper); stroke: var(--relay); stroke-width: 2; }
+.glyph.card rect { fill: var(--tape); stroke: var(--relay); stroke-width: 1.4; }
+.glyph.card line { stroke: var(--relay); stroke-width: 1.2; }
+.glyph.probe polygon { fill: var(--paper); stroke: var(--accent); stroke-width: 2; }
+.glyph.ack polygon { fill: var(--accent); }
+.glyph.cross path { fill: none; stroke: var(--accent); stroke-width: 2.4; stroke-linecap: round; }
+.glyph.cross { animation: fade 1.6s forwards; }
+@keyframes fade { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  margin: 18px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--ink);
+  font: 12px/1.3 var(--mono);
+  color: var(--soft);
+}
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+.legend svg { width: 28px; height: 16px; overflow: visible; }
+.swatch { fill: url(#hatch); stroke: var(--ink); stroke-width: 1; }
+.swatch-direct { stroke: var(--accent); stroke-width: 4; }
+
+.rail {
+  display: flex;
+  align-items: center;
+  margin: 18px 0 30px;
+  font: 500 11px/1.2 var(--mono);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.rail button {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  color: var(--soft);
+}
+.rail b {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  font: italic 400 24px/1 var(--serif);
+  letter-spacing: 0;
+  text-transform: none;
+  transition: background .2s, color .2s;
+}
+.rail button:hover { color: var(--ink); }
+.rail button:not(:disabled, [aria-current]):hover b { background: var(--tape); }
+.rail button[aria-current="step"] { color: var(--ink); }
+.rail button[aria-current="step"] b { background: var(--ink); color: var(--paper); }
+.rail button[aria-current="step"] b::after {
+  content: "↻";
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  padding: 1px;
+  background: var(--paper);
+  color: var(--accent);
+  font: 13px/1 var(--mono);
+}
+.rail button:focus-visible b { outline: 2px solid var(--accent); outline-offset: 3px; }
+#next { margin-left: 14px; }
+#next:disabled { opacity: .3; cursor: default; }
+html:not(.js) :is(#next, .hint) { display: none; }
+.wire { flex: 1; min-width: 10px; height: 1px; margin: 0 8px; background: var(--ink); }
+.fork { position: relative; display: grid; gap: 10px; padding-left: 16px; margin-left: -8px; }
+.fork::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 18px;
+  bottom: 18px;
+  width: 16px;
+  border: 1px solid var(--ink);
+  border-right: 0;
+}
+
+.steps { list-style: none; margin: 0; padding: 0; min-height: 16em; }
+.steps > li { display: grid; grid-template-columns: 96px minmax(0, 1fr); column-gap: 18px; }
+.js .steps > li:not(.on) { display: none; }
+.steps > li.on { animation: rise .45s ease-out both; }
+.steps .n { grid-row: 1 / span 6; font: italic 400 116px/.82 var(--serif); color: var(--accent); }
+.steps h2 { margin: 2px 0 10px; font: 500 30px/1.15 var(--serif); }
+.steps p { grid-column: 2; margin: 0 0 12px; max-width: 62ch; }
+.status { font: 12px/1.55 var(--mono); padding: 9px 12px; border: 1px solid var(--ink); background: var(--tape); }
+.status b { font-weight: 500; color: var(--accent); }
+
+.tape {
+  position: relative;
+  padding: 22px 22px 18px 34px;
+  background: var(--tape);
+  border: 1px solid var(--ink);
+  box-shadow: 7px 7px 0 -1px var(--paper), 7px 7px 0 0 var(--ink);
+}
+.tape::before {
+  content: "";
+  position: absolute;
+  left: 11px;
+  top: 12px;
+  bottom: 12px;
+  width: 8px;
+  background: radial-gradient(circle, var(--paper) 2.4px, var(--ink) 2.5px, var(--ink) 3.1px, transparent 3.3px) 0 0 / 8px 16px repeat-y;
+}
+.tape h2 { margin: 0; font: italic 400 27px/1.1 var(--serif); }
+.host { margin: 4px 0 14px; font: 12px/1 var(--mono); color: var(--soft); }
+#ledger { list-style: none; margin: 0; padding: 0; font: 12.5px/1.45 var(--mono); }
+#ledger li {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 8px;
+  padding: 7px 0;
+  border-top: 1px dashed color-mix(in srgb, var(--ink) 28%, transparent);
+  color: var(--soft);
+  overflow-wrap: anywhere;
+}
+.js #ledger li:not(.on) { display: none; }
+#ledger li.typed { animation: type .55s steps(18, end) both; }
+#ledger b { font-weight: 500; color: var(--ink); }
+#ledger .tag { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; padding-top: 1px; }
+#ledger .unseen > span:last-child { padding-left: 8px; border-left: 2px solid var(--accent); }
+.count { color: var(--ink); }
+.redact {
+  display: inline-block;
+  width: var(--w, 0px);
+  height: .75em;
+  margin-left: 4px;
+  vertical-align: -.05em;
+  background: var(--ink);
+  transition: width .3s;
+}
+.ledger-note {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--ink);
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--soft);
+}
+@keyframes type { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+
+.colophon { padding-bottom: 64px; font: 12px/1.6 var(--mono); color: var(--soft); }
+.colophon p { margin: 0; padding-top: 14px; border-top: 1px solid var(--ink); }
+
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+.masthead h1, .lede, .figure, .ledger { animation: rise .7s ease-out both; }
+.lede { animation-delay: .12s; }
+.figure { animation-delay: .22s; }
+.ledger { animation-delay: .34s; }
+
+@media (max-width: 1000px) {
+  .masthead, .stage, .colophon { grid-template-columns: minmax(0, 1fr); }
+  .stage { grid-template-areas: "figure" "walk" "ledger"; }
+  .lede { margin-top: 20px; }
+  .ledger { position: static; margin-top: 40px; }
+}
+@media (max-height: 760px) and (min-width: 1001px) {
+  .masthead { padding-top: 24px; }
+  h1 { margin-top: 10px; font-size: 56px; }
+  #map { max-height: calc(100vh - 290px); }
+}
+@media (max-width: 760px) {
+  .masthead, .stage, .colophon { padding-inline: 18px; }
+  #map text { font-size: 20px; }
+  #map .t-serif { font-size: 34px; }
+  #map #pathlabel, #map .noanswer { font-size: 16px; }
+  #map .t-small, #map .m-hide { display: none; }
+  .rail span { display: none; }
+  .wire { min-width: 4px; margin: 0 4px; }
+  .fork { margin-left: -4px; }
+  #next { margin-left: 8px; }
+  .steps > li { grid-template-columns: 56px minmax(0, 1fr); }
+  .steps .n { font-size: 72px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <p class="eyebrow">natty · how it works <a class="gh" href="https://github.com/razvandimescu/natty" aria-label="natty on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a></p>
+  <h1>How natty finds a <em>path</em> to a peer</h1>
+  <p class="lede">You want a QUIC connection to Bea. You know her key and her relay. You do not know her address. Both of you are behind NAT.</p>
+</header>
+
+<main class="stage">
+  <figure class="figure">
+    <svg id="map" viewBox="0 20 1000 570" role="img" aria-labelledby="map-title">
+      <title id="map-title">You and Bea, each behind a NAT, and one relay on the internet</title>
+      <defs>
+        <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect class="hatch-bg" width="6" height="6"/>
+          <line class="hatch-line" x1="0" y1="0" x2="0" y2="6"/>
+        </pattern>
+      </defs>
+
+      <text class="t-small t-soft" x="500" y="552" text-anchor="middle">INTERNET</text>
+
+      <rect class="net" x="54" y="314" width="272" height="242"/>
+      <rect class="net" x="674" y="314" width="272" height="242"/>
+
+      <path id="direct" class="route direct" d="M202 452 L798 452"/>
+      <path class="direct-solid draw" d="M202 452 L798 452"/>
+
+      <g class="walls">
+        <rect class="wall" x="47" y="307" width="286" height="256"/>
+        <rect class="edge" x="40" y="300" width="300" height="270"/>
+        <rect class="edge" x="54" y="314" width="272" height="242"/>
+        <rect class="wall" x="667" y="307" width="286" height="256"/>
+        <rect class="edge" x="660" y="300" width="300" height="270"/>
+        <rect class="edge" x="674" y="314" width="272" height="242"/>
+      </g>
+      <rect class="gap" x="240" y="297" width="20" height="20"/>
+      <rect class="gap" x="740" y="297" width="20" height="20"/>
+      <rect class="gap stun-gap you" x="292" y="297" width="16" height="20"/>
+      <rect class="gap stun-gap bea" x="692" y="297" width="16" height="20"/>
+
+      <g class="door you">
+        <rect class="door-gap" x="325" y="438" width="16" height="28"/>
+        <line class="jamb" x1="326" y1="438" x2="340" y2="438"/>
+        <line class="jamb" x1="326" y1="466" x2="340" y2="466"/>
+        <line class="flap" x1="333" y1="438" x2="333" y2="466" style="transform-origin: 333px 438px"/>
+      </g>
+      <g class="door bea">
+        <rect class="door-gap" x="659" y="438" width="16" height="28"/>
+        <line class="jamb" x1="660" y1="438" x2="674" y2="438"/>
+        <line class="jamb" x1="660" y1="466" x2="674" y2="466"/>
+        <line class="flap" x1="667" y1="438" x2="667" y2="466" style="transform-origin: 667px 438px"/>
+      </g>
+
+      <path id="s-you" class="route stun-line" d="M182 422 C198 372 280 335 300 307 C320 279 490 205 500 136"/>
+      <path id="s-bea" class="route stun-line" d="M818 422 C802 372 720 335 700 307 C680 279 510 205 500 136"/>
+
+      <g class="pipes">
+        <path id="r-you" class="route pipe draw" d="M160 422 C165 368 230 335 250 307 C270 279 430 200 440 136"/>
+        <path class="pipe-core draw" d="M160 422 C165 368 230 335 250 307 C270 279 430 200 440 136"/>
+        <path id="r-bea" class="route pipe draw" d="M840 422 C835 368 770 335 750 307 C730 279 570 200 560 136"/>
+        <path class="pipe-core draw" d="M840 422 C835 368 770 335 750 307 C730 279 570 200 560 136"/>
+      </g>
+
+      <rect class="relay-box" x="380" y="36" width="240" height="100"/>
+      <rect class="relay-inner" x="385" y="41" width="230" height="90"/>
+      <text class="t-serif" x="500" y="76" text-anchor="middle">relay</text>
+      <text x="500" y="98" text-anchor="middle">relay.example.net</text>
+      <text class="t-soft m-hide" x="500" y="122" text-anchor="middle" font-size="12.5">tls 443 · stun udp 3478</text>
+      <text class="cap t-relay" x="634" y="84">cap 1 MiB/s</text>
+      <text class="cap t-relay" x="634" y="102">for each session</text>
+
+      <rect class="device" x="138" y="422" width="64" height="40"/>
+      <path class="device" d="M126 466 H214 L208 474 H132 Z"/>
+      <text class="t-serif" x="170" y="503" text-anchor="middle">you</text>
+      <text x="170" y="524" text-anchor="middle">kq8xt3ry…</text>
+      <text class="t-soft" x="170" y="545" text-anchor="middle" font-size="13">192.168.1.20</text>
+
+      <rect class="device" x="798" y="422" width="64" height="40"/>
+      <path class="device" d="M786 466 H874 L868 474 H792 Z"/>
+      <text class="t-serif" x="830" y="503" text-anchor="middle">Bea</text>
+      <text x="830" y="524" text-anchor="middle">e4hzwnbo…</text>
+      <text class="t-soft" x="830" y="545" text-anchor="middle" font-size="13">10.0.0.5</text>
+
+      <text class="t-small t-soft" x="68" y="340">YOUR NETWORK</text>
+      <text class="t-small t-soft" x="932" y="340" text-anchor="end">BEA'S NETWORK</text>
+      <text x="40" y="288"><tspan font-weight="500">NAT</tspan><tspan class="t-soft" dx="8">203.0.113.7</tspan></text>
+      <text x="960" y="288" text-anchor="end"><tspan font-weight="500">NAT</tspan><tspan class="t-soft" dx="8">198.51.100.24</tspan></text>
+      <text class="pub you t-relay" x="40" y="268"><tspan class="m-hide">udp </tspan>203.0.113.7:40112</text>
+      <text class="pub bea t-relay" x="960" y="268" text-anchor="end"><tspan class="m-hide">udp </tspan>198.51.100.24:47809</text>
+
+      <text id="pathlabel" x="500" y="432" text-anchor="middle"></text>
+      <text class="noanswer t-soft" x="500" y="480" text-anchor="middle">no probe got an answer</text>
+
+      <g id="packets"></g>
+    </svg>
+  </figure>
+
+  <section class="walk" aria-label="Steps">
+    <nav class="rail" aria-label="Step">
+      <button data-go="0"><b>0</b><span>Sessions</span></button>
+      <i class="wire"></i>
+      <button data-go="1"><b>1</b><span>Handshake</span></button>
+      <i class="wire"></i>
+      <button data-go="2"><b>2</b><span>STUN</span></button>
+      <i class="wire"></i>
+      <button data-go="3"><b>3</b><span>Candidates</span></button>
+      <i class="wire"></i>
+      <div class="fork">
+        <button data-go="4"><b>4</b><span>Direct</span></button>
+        <button data-go="5"><b>5</b><span>Or relayed</span></button>
+      </div>
+      <button id="next" aria-label="Next step"><b>→</b></button>
+    </nav>
+
+    <ol class="steps" aria-live="polite">
+      <li data-step="0">
+        <span class="n" aria-hidden="true">0</span>
+        <h2>Sessions</h2>
+        <p>Each endpoint has an Ed25519 key and keeps one TLS session to the relay. Bea's address is her key and her relay host: <code>e4hzwnbo…@relay.example.net</code>.</p>
+        <p>A NAT lets out all packets. It lets in only answers to packets that went out. The relay can reach both of you, because each of you opened a session to it.</p>
+        <p class="hint">Press → or a step number to continue. The arrow keys also work.</p>
+      </li>
+      <li data-step="1">
+        <span class="n" aria-hidden="true">1</span>
+        <h2>Handshake through the relay</h2>
+        <p>Your endpoint sends the QUIC handshake to the relay, addressed to Bea's key. The relay forwards it on Bea's session. The handshake fails unless the peer holds the key that you dialed.</p>
+        <p>The connection is ready now. The steps that follow change only its path. The relay cannot read the QUIC payload.</p>
+      </li>
+      <li data-step="2">
+        <span class="n" aria-hidden="true">2</span>
+        <h2>Public addresses from STUN</h2>
+        <p>Each endpoint sends a STUN request from its UDP socket to the relay. The relay answers with the source address that it saw. That address is the public address that the NAT gave to the socket.</p>
+        <p>The probes in step 3 use the same socket.</p>
+      </li>
+      <li data-step="3">
+        <span class="n" aria-hidden="true">3</span>
+        <h2>Candidates, then probes</h2>
+        <p>Your endpoint allowed Bea's key when you dialed her. Bea's application allowed your key. Only allowed keys get candidates and probes.</p>
+        <p>Each of you sends candidates through the relay: a local and a public address. Candidates are signed, but not encrypted.</p>
+        <p>Then each of you sends an opener to each candidate of the other: a UDP packet with TTL&nbsp;2. It opens your NAT for Bea and expires before her NAT. Some NATs change the port when a packet from outside arrives first, so the opener must not reach her.</p>
+        <p>200&nbsp;ms later, both of you send probes. Both NATs are open now.</p>
+      </li>
+      <li data-step="4">
+        <span class="n" aria-hidden="true">4</span>
+        <h2>Direct path</h2>
+        <p>Bea answers your probe. The QUIC connection moves to the direct path. It is the same connection, so your application sees no change.</p>
+        <p>The relay session stays open as a fallback. When the path is silent for 25&nbsp;s, a probe keeps the NAT mappings open.</p>
+        <p class="status"><b>Measured</b> on real networks: a direct path through one NAT, and between two NATs that change the port on an early packet. <b>Not yet shown</b>: double NAT and carrier-grade NAT. See <a href="https://github.com/razvandimescu/natty/blob/main/docs/results.md">results.md</a>.</p>
+      </li>
+      <li data-step="5">
+        <span class="n" aria-hidden="true">5</span>
+        <h2>Or: the relay continues</h2>
+        <p>Some pairs of NATs drop every probe. Then no probe gets an answer, and the relay continues to forward the packets. The connection does not fail.</p>
+        <p>The relay applies a rate cap to each session, 1&nbsp;MiB/s by default. The relay also carries the connection again when a direct path stops answering for 5&nbsp;s.</p>
+        <p>A study measured 4.4 million DCUtR punch attempts in IPFS (<a href="https://arxiv.org/abs/2604.12484">Trautwein et al., IMC 2026</a>). 29% failed before the punch started, and 70%&nbsp;±&nbsp;7.1% of the rest succeeded. So about half of all pairs stay on the relay, and the relay path is a normal path.</p>
+      </li>
+    </ol>
+
+    <div class="legend">
+      <span><svg viewBox="-14 -8 28 16"><line class="pipe" x1="-14" y1="0" x2="14" y2="0"/><line class="pipe-core" x1="-14" y1="0" x2="14" y2="0"/></svg>TLS session</span>
+      <span><svg viewBox="-14 -8 28 16"><rect class="swatch" x="-14" y="-6" width="28" height="12"/></svg>NAT</span>
+      <span><svg viewBox="-14 -8 28 16"><g class="glyph quic"><rect x="-5" y="-5" width="10" height="10"/></g></svg>QUIC packet, encrypted</span>
+      <span><svg viewBox="-14 -8 28 16"><g class="glyph stun"><circle r="5.5"/></g></svg>STUN</span>
+      <span><svg viewBox="-14 -8 28 16"><g class="glyph card"><rect x="-13" y="-8" width="26" height="16"/><line x1="-8" y1="-2" x2="8" y2="-2"/><line x1="-8" y1="3" x2="4" y2="3"/></g></svg>candidates, signed</span>
+      <span><svg viewBox="-14 -8 28 16"><g class="glyph probe"><polygon points="0,-7 7,0 0,7 -7,0"/></g></svg>opener or probe</span>
+      <span><svg viewBox="-14 -8 28 16"><line class="swatch-direct" x1="-14" y1="0" x2="14" y2="0"/></svg>direct UDP path</span>
+    </div>
+  </section>
+
+  <aside class="ledger" aria-labelledby="ledger-title">
+    <div class="tape">
+      <h2 id="ledger-title">Visible to the relay</h2>
+      <p class="host">relay.example.net</p>
+      <ol id="ledger">
+        <li id="L-sess-you" data-from="0"><span class="tag">session</span><span><b>kq8xt3ry…</b><br>from 203.0.113.7:50211</span></li>
+        <li id="L-sess-bea" data-from="0"><span class="tag">session</span><span><b>e4hzwnbo…</b><br>from 198.51.100.24:61002</span></li>
+        <li id="L-send-ab" data-from="1"><span class="tag">forward</span><span><b>kq8xt3ry…</b> → <b>e4hzwnbo…</b><br><span class="count" id="C-ab">0 B</span><span class="redact" id="R-ab" title="Encrypted QUIC payload"></span></span></li>
+        <li id="L-send-ba" data-from="1"><span class="tag">forward</span><span><b>e4hzwnbo…</b> → <b>kq8xt3ry…</b><br><span class="count" id="C-ba">0 B</span><span class="redact" id="R-ba" title="Encrypted QUIC payload"></span></span></li>
+        <li id="L-alpn" data-from="1"><span class="tag">alpn</span><span><b>my-app/1</b><br>The first QUIC packet is not confidential.</span></li>
+        <li id="L-stun-you" data-from="2"><span class="tag">stun</span><span>203.0.113.7:40112</span></li>
+        <li id="L-stun-bea" data-from="2"><span class="tag">stun</span><span>198.51.100.24:47809</span></li>
+        <li id="L-cand-you" data-from="3"><span class="tag">candidates</span><span><b>kq8xt3ry…</b> → <b>e4hzwnbo…</b><br>203.0.113.7:40112<br>192.168.1.20:40112</span></li>
+        <li id="L-cand-bea" data-from="3"><span class="tag">candidates</span><span><b>e4hzwnbo…</b> → <b>kq8xt3ry…</b><br>198.51.100.24:47809<br>10.0.0.5:47809</span></li>
+        <li id="L-probes" data-from="3" class="unseen"><span class="tag">probes</span><span>Probes go from peer to peer. The relay does not see them.</span></li>
+        <li id="L-direct" class="unseen"><span class="tag">direct</span><span>The packets of this connection no longer reach the relay.</span></li>
+      </ol>
+      <p class="ledger-note">The relay can see these items. natty-relay does not log them. It keeps only aggregate counters.</p>
+    </div>
+  </aside>
+</main>
+
+<footer class="colophon">
+  <p>Addresses come from the documentation ranges of RFC 5737. Keys are shortened. <a href="https://github.com/razvandimescu/natty">README</a> · <a href="https://github.com/razvandimescu/natty/blob/main/docs/design.md">wire design</a> · <a href="https://github.com/razvandimescu/natty/blob/main/docs/results.md">measurements</a></p>
+</footer>
+
+<script>
+(() => {
+  const svg = document.getElementById('map');
+  const layer = document.getElementById('packets');
+  const ledger = [...document.querySelectorAll('#ledger > li')];
+  const texts = [...document.querySelectorAll('.steps > li')];
+  const rail = [...document.querySelectorAll('[data-go]')];
+  const next = document.getElementById('next');
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const SPEED = 0.42;
+  // Repeating motion stops after this many ms (WCAG 2.2.2); the current step's ↻ replays it.
+  const LOOPS_END = 5000;
+  const LAST = 5;
+
+  const route = {};
+  for (const el of svg.querySelectorAll('.route')) route[el.id] = { el, len: el.getTotalLength() };
+  for (const el of svg.querySelectorAll('.draw')) el.style.setProperty('--len', el.getTotalLength());
+
+  const SHAPES = {
+    quic: '<rect x="-5" y="-5" width="10" height="10"/>',
+    ping: '<circle r="3"/>',
+    stun: '<circle r="5.5"/>',
+    card: '<rect x="-13" y="-8" width="26" height="16"/><line x1="-8" y1="-2" x2="8" y2="-2"/><line x1="-8" y1="3" x2="4" y2="3"/>',
+    probe: '<polygon points="0,-7 7,0 0,7 -7,0"/>',
+    ack: '<polygon points="0,-7 7,0 0,7 -7,0"/>',
+    cross: '<path d="M-6 -6 L6 6 M6 -6 L-6 6"/>',
+  };
+
+  let step = 0, t0 = 0, raf = 0, queue = [], flights = [];
+  const bytes = { ab: 0, ba: 0 };
+
+  function after(at, fn) {
+    if (reduced) fn(at);
+    else queue.push({ at, fn });
+  }
+
+  function every(start, period, fn) {
+    if (reduced) return fn(start);
+    const tick = at => at <= LOOPS_END && queue.push({ at, fn: () => { fn(at); tick(at + period); } });
+    tick(start);
+  }
+
+  function glyph(kind, p) {
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', `glyph ${kind}`);
+    g.innerHTML = SHAPES[kind];
+    if (p) g.setAttribute('transform', `translate(${p.x} ${p.y})`);
+    layer.append(g);
+    return g;
+  }
+
+  // Fractions are measured from the flight's origin: the path start, or the path end when `back` is set.
+  function point(f, k) {
+    return f.r.el.getPointAtLength((f.back ? 1 - k : k) * f.r.len);
+  }
+
+  function fly(id, kind, { at = 0, back = false, to = 1, mark, drop, then } = {}) {
+    const r = route[id];
+    after(at, start => {
+      const f = { r, back, to, mark, drop, then, start, dur: (to * r.len) / SPEED, g: glyph(kind) };
+      if (!reduced) return flights.push(f);
+      f.g.setAttribute('transform', `translate(${point(f, to / 2).x} ${point(f, to / 2).y})`);
+      mark?.[1]();
+      land(f, true);
+    });
+  }
+
+  function land(f, keep) {
+    const end = f.start + f.dur;
+    if (f.drop) {
+      const x = glyph('cross', point(f, f.to));
+      if (!keep) after(end + 1600, () => x.remove());
+    }
+    if (!keep) f.g.remove();
+    f.then?.(end);
+  }
+
+  function frame(now) {
+    const t = now - t0;
+    for (let due; (due = queue.filter(q => q.at <= t)).length; ) {
+      queue = queue.filter(q => q.at > t);
+      due.sort((a, b) => a.at - b.at).forEach(q => q.fn(q.at));
+    }
+    flights = flights.filter(f => {
+      const k = Math.max(0, Math.min(1, (t - f.start) / f.dur)) * f.to;
+      const p = point(f, k);
+      f.g.setAttribute('transform', `translate(${p.x.toFixed(1)} ${p.y.toFixed(1)})`);
+      if (f.mark && k >= f.mark[0]) { f.mark[1](); f.mark = null; }
+      if (k < f.to) return true;
+      land(f, false);
+      return false;
+    });
+    raf = requestAnimationFrame(frame);
+  }
+
+  const flag = (name, on = true) => svg.classList.toggle(name, on);
+  const label = text => { document.getElementById('pathlabel').textContent = text; };
+  const fmt = b => b < 1e3 ? `${b} B` : b < 1e6 ? `${(b / 1e3).toFixed(1)} KB` : `${(b / 1e6).toFixed(2)} MB`;
+
+  function count(k, add) {
+    bytes[k] += add;
+    document.getElementById(`C-${k}`).textContent = fmt(bytes[k]);
+    document.getElementById(`R-${k}`).style.setProperty('--w', `${Math.min(150, 14 + Math.sqrt(bytes[k]) / 2.4).toFixed(0)}px`);
+  }
+
+  function reveal(id) {
+    const li = document.getElementById(`L-${id}`);
+    if (!li.classList.contains('on')) li.classList.add('on', 'typed');
+  }
+
+  const ping = (id, at) => fly(id, 'ping', { at, then: t => fly(id, 'ping', { at: t, back: true }) });
+
+  function via(src, dst, kind, at, { atRelay, then } = {}) {
+    fly(src, kind, { at, then: t => { atRelay?.(); fly(dst, kind, { at: t, back: true, then }); } });
+  }
+
+  // Wall crossings on the direct path, as fractions from either end.
+  const OWN_WALL = 0.2;
+  // Where an opener expires: past its own NAT, well before the far one.
+  const OPENER_TTL = 0.3;
+
+  const STEPS = [
+    () => {
+      after(500, () => reveal('sess-you'));
+      after(800, () => reveal('sess-bea'));
+      every(1400, 5000, at => { ping('r-you', at); ping('r-bea', at + 450); });
+    },
+    () => {
+      via('r-you', 'r-bea', 'quic', 300, {
+        atRelay: () => { count('ab', 1200); reveal('send-ab'); reveal('alpn'); },
+        then: t => via('r-bea', 'r-you', 'quic', t + 150, {
+          atRelay: () => { count('ba', 1200); reveal('send-ba'); },
+          then: t => via('r-you', 'r-bea', 'quic', t + 150, {
+            atRelay: () => count('ab', 1200),
+            then: () => label('path relay'),
+          }),
+        }),
+      });
+    },
+    () => {
+      for (const [side, at] of [['you', 200], ['bea', 500]]) {
+        fly(`s-${side}`, 'stun', {
+          at,
+          mark: [0.27, () => flag(`gap-${side}`)],
+          then: t => {
+            reveal(`stun-${side}`);
+            fly(`s-${side}`, 'stun', { at: t, back: true, then: () => flag(`pub-${side}`) });
+          },
+        });
+      }
+    },
+    () => {
+      via('r-you', 'r-bea', 'card', 200, {
+        atRelay: () => reveal('cand-you'),
+        then: t => via('r-bea', 'r-you', 'card', t + 150, {
+          atRelay: () => reveal('cand-bea'),
+          then: t => {
+            reveal('probes');
+            flag('direct-try');
+            fly('direct', 'probe', { at: t + 200, to: OPENER_TTL, drop: true, mark: [OWN_WALL, () => flag('door-you')] });
+            fly('direct', 'probe', { at: t + 200, back: true, to: OPENER_TTL, drop: true, mark: [OWN_WALL, () => flag('door-bea')] });
+            fly('direct', 'probe', { at: t + 1300 });
+            fly('direct', 'probe', { at: t + 1300, back: true });
+          },
+        }),
+      });
+    },
+    () => {
+      fly('direct', 'ack', {
+        at: 300,
+        back: true,
+        then: () => {
+          flag('direct-up');
+          label('path direct 198.51.100.24:47809');
+          reveal('direct');
+        },
+      });
+      every(1900, 900, at => fly('direct', 'quic', { at }));
+      every(2350, 900, at => fly('direct', 'quic', { at, back: true }));
+      every(4000, 6000, at => { ping('r-you', at); ping('r-bea', at + 400); });
+    },
+    () => {
+      every(400, 1100, at => via('r-you', 'r-bea', 'quic', at, { atRelay: () => count('ab', 1452) }));
+      every(950, 1100, at => via('r-bea', 'r-you', 'quic', at, { atRelay: () => count('ba', 1452) }));
+    },
+  ];
+
+  function go(n) {
+    if (n < 0 || n > LAST) return;
+    step = n;
+    cancelAnimationFrame(raf);
+    queue = [];
+    flights = [];
+    layer.replaceChildren();
+    svg.dataset.step = step;
+
+    const on = new Set();
+    if (step >= 3) ['gap-you', 'gap-bea', 'pub-you', 'pub-bea'].forEach(c => on.add(c));
+    if (step === 4) ['door-you', 'door-bea', 'direct-try'].forEach(c => on.add(c));
+    if (step === 5) on.add('direct-fail');
+    for (const c of ['gap-you', 'gap-bea', 'pub-you', 'pub-bea', 'door-you', 'door-bea', 'direct-try', 'direct-up', 'direct-fail']) flag(c, on.has(c));
+    label(step >= 2 ? 'path relay' : '');
+
+    bytes.ab = step >= 2 ? 2400 : 0;
+    bytes.ba = step >= 2 ? 1200 : 0;
+    count('ab', 0);
+    count('ba', 0);
+    for (const li of ledger) {
+      li.classList.remove('typed');
+      li.classList.toggle('on', 'from' in li.dataset && +li.dataset.from < step);
+    }
+    for (const li of texts) li.classList.toggle('on', +li.dataset.step === step);
+    for (const b of rail) {
+      if (+b.dataset.go === step) b.setAttribute('aria-current', 'step');
+      else b.removeAttribute('aria-current');
+    }
+    next.disabled = step === LAST;
+    history.replaceState(null, '', `#${step}`);
+
+    t0 = performance.now();
+    STEPS[step]();
+    if (!reduced) raf = requestAnimationFrame(frame);
+  }
+
+  rail.forEach(b => b.addEventListener('click', () => go(+b.dataset.go)));
+  next.addEventListener('click', () => go(step + 1));
+  addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight') go(step + 1);
+    else if (e.key === 'ArrowLeft') go(step - 1);
+  });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) go(step); });
+
+  go(parseInt(location.hash.slice(1), 10) || 0);
+})();
+</script>
+</body>
+</html>
