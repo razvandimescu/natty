@@ -20,6 +20,10 @@ struct Harness {
 }
 
 async fn start(cap: u32, max_conns_per_ip: usize) -> Harness {
+    start_capped(cap, 0, max_conns_per_ip).await
+}
+
+async fn start_capped(cap: u32, total_cap: u32, max_conns_per_ip: usize) -> Harness {
     let cert =
         rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()]).unwrap();
     let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
@@ -43,6 +47,7 @@ async fn start(cap: u32, max_conns_per_ip: usize) -> Harness {
     let relay = Relay::new(Config {
         tls: Arc::new(server),
         cap,
+        total_cap,
         max_conns_per_ip,
         stun_port: udp.local_addr().unwrap().port(),
     });
@@ -245,6 +250,23 @@ async fn cap_drops_excess_instead_of_queueing() {
         .await;
     }
     sync(&mut sa).await;
+    let body = get(&h, "/health").await;
+    assert!(body.contains("\nforwarded_frames 1\n"), "{body}");
+    assert!(body.contains("\ndropped_frames 1\n"), "{body}");
+}
+
+#[tokio::test]
+async fn total_cap_is_shared_by_all_sessions() {
+    let h = start_capped(0, 1000, 16).await;
+    let (a, b) = (SecretKey::generate(), SecretKey::generate());
+    let mut sa = connect(&h, &a).await;
+    let mut sb = connect(&h, &b).await;
+
+    for (from, to) in [(&mut sa, b.public()), (&mut sb, a.public())] {
+        let data = vec![0; wire::MAX_DATAGRAM];
+        send(from, Frame::Send { dst: to, data }).await;
+        sync(from).await;
+    }
     let body = get(&h, "/health").await;
     assert!(body.contains("\nforwarded_frames 1\n"), "{body}");
     assert!(body.contains("\ndropped_frames 1\n"), "{body}");

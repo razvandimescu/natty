@@ -10,7 +10,7 @@ use tokio_rustls::rustls::pki_types::pem::PemObject;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::rustls::{version, ServerConfig};
 
-const USAGE: &str = "usage: natty-relay --cert PEM --key PEM [--listen [::]:443] [--stun [::]:3478] [--cap BYTES_PER_SEC] [--per-ip N]";
+const USAGE: &str = "usage: natty-relay --cert PEM --key PEM [--listen [::]:443] [--stun [::]:3478] [--cap BYTES_PER_SEC] [--total-cap BYTES_PER_SEC] [--per-ip N]";
 
 struct Args {
     cert: PathBuf,
@@ -18,6 +18,7 @@ struct Args {
     listen: SocketAddr,
     stun: SocketAddr,
     cap: u32,
+    total_cap: u32,
     per_ip: usize,
 }
 
@@ -27,6 +28,7 @@ fn parse_args() -> Result<Args, String> {
     let mut listen = "[::]:443".parse().unwrap();
     let mut stun = "[::]:3478".parse().unwrap();
     let mut cap = 1 << 20;
+    let mut total_cap = 0;
     let mut per_ip = 16;
 
     let mut args = std::env::args().skip(1);
@@ -38,6 +40,7 @@ fn parse_args() -> Result<Args, String> {
             "--listen" => listen = parse(&flag, &value)?,
             "--stun" => stun = parse(&flag, &value)?,
             "--cap" => cap = parse(&flag, &value)?,
+            "--total-cap" => total_cap = parse(&flag, &value)?,
             "--per-ip" => per_ip = parse(&flag, &value)?,
             _ => return Err(format!("unknown flag {flag}")),
         }
@@ -48,6 +51,7 @@ fn parse_args() -> Result<Args, String> {
         listen,
         stun,
         cap,
+        total_cap,
         per_ip,
     })
 }
@@ -81,6 +85,7 @@ async fn main() -> io::Result<()> {
     let relay = Relay::new(Config {
         tls: Arc::new(tls_config(&args)?),
         cap: args.cap,
+        total_cap: args.total_cap,
         max_conns_per_ip: args.per_ip,
         stun_port: stun.local_addr()?.port(),
     });

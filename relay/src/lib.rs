@@ -32,6 +32,8 @@ pub struct Config {
     pub tls: Arc<ServerConfig>,
     /// Forwarded bytes per second per session; 0 is uncapped.
     pub cap: u32,
+    /// Forwarded bytes per second across all sessions; 0 is uncapped.
+    pub total_cap: u32,
     /// Concurrent connections per IPv4 address or IPv6 /64.
     pub max_conns_per_ip: usize,
     /// Advertised in WELCOME; 0 when no STUN responder runs.
@@ -46,6 +48,7 @@ pub struct Relay {
 struct State {
     acceptor: TlsAcceptor,
     cap: u32,
+    total: Mutex<TokenBucket>,
     max_conns_per_ip: usize,
     stun_port: u16,
     epoch: u64,
@@ -85,6 +88,7 @@ impl Relay {
             state: Arc::new(State {
                 acceptor: TlsAcceptor::from(config.tls),
                 cap: config.cap,
+                total: Mutex::new(TokenBucket::new(config.total_cap)),
                 max_conns_per_ip: config.max_conns_per_ip,
                 stun_port: config.stun_port,
                 epoch,
@@ -315,7 +319,8 @@ impl State {
         bucket: &mut TokenBucket,
     ) {
         let len = data.len() as u64;
-        if !bucket.take(data.len()) {
+        // The session's own cap first, so its excess never spends the shared budget.
+        if !bucket.take(data.len()) || !self.total.lock().unwrap().take(data.len()) {
             bump(&self.stats.dropped_frames, 1);
             return;
         }

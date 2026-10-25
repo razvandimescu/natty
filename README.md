@@ -171,6 +171,9 @@ Flags:
 - `--stun`: the UDP address of the STUN responder. The default is `[::]:3478`.
 - `--cap`: the forwarded bytes per second for each session. The default is
   1 MiB/s. A value of 0 removes the cap.
+- `--total-cap`: the forwarded bytes per second for all sessions together. The
+  default is 0, no ceiling. A public relay can use it to stay inside its
+  traffic budget.
 - `--per-ip`: the connection limit for each IPv4 address or IPv6 /64. The
   default is 16.
 
