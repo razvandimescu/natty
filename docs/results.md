@@ -103,9 +103,7 @@ Findings:
 3. quinn moved natty's lockfile from 74 to 102 crates. It sits behind the
    default `quic` feature; `natty-relay` builds without it.
 
-Open: the 2 s route watch that reconnects on a local-address change is in the
-client but has not been measured on a real Wi-Fi to hotspot switch. Repeat the
-Phase 1 switch and record detection time; expect low seconds, not 60.
+Not measured: the 2 s route watch, which reconnects on a local-address change, on a real Wi-Fi to hotspot switch.
 
 ## 2026-09-15: relay path, home to cellular (Phase 1 gate, extended)
 
@@ -138,7 +136,4 @@ Findings:
    (it retransmits) and must never be relied on by signalling messages
    without their own retry. Stated in design.md.
 
-Open: whether sessions survive hours of near-idle traffic on cellular and on
-the home router (NAT mapping timeouts against the 15 s ping). Both probes left
-running; analyse drops per network, reconnect times, round-trip percentiles,
-and missing sequence numbers.
+Not measured: whether sessions survive hours of near-idle traffic on cellular and on the home router (NAT mapping timeouts against the 15 s ping).

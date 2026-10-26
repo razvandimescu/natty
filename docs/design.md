@@ -1,7 +1,6 @@
 # natty wire design (draft 1)
 
-Every section below is specified. The direct path is measured on real
-networks through one NAT only (docs/results.md).
+Every section below is specified. The direct path is measured on real networks through one NAT, and between one pair of NATs that remap on an early packet (docs/results.md).
 
 ## Identities
 
@@ -275,7 +274,7 @@ current one IPv4.
 
 Keys online and their addresses, session lifetimes, which pairs exchange
 frames, and forwarded byte counts. CANDIDATES are signed, not encrypted, so the
-relay also sees the local and reflexive addresses of peers that punch. Never
+relay also sees the local and reflexive addresses of peers that punch. The first QUIC packet of a connection is not confidential, so the relay can read its ALPN. Never
 QUIC payload. The code has aggregate
 counters and no per-session log path.
 
