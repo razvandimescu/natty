@@ -24,15 +24,12 @@ Status:
 
 ## When to use natty
 
-Use natty when all of these apply:
+natty connects the peers of one application through NAT. It is not a VPN. The application decides which keys can connect, not a server.
 
-- You want an encrypted QUIC connection to a key, direct when possible.
-- You want few dependencies. With the `quic` feature, natty has 41 crates in its
-  dependency tree on Linux, natty included. In numa's lockfile, natty added 8
-  crates. iroh 1.2.0 with port mapping, which natty does not have, added 131.
-- You want no third-party service by default. iroh 1.2.0 uses n0's DNS service
-  and pkarr relay by default ([docs/research.md](docs/research.md)). natty
-  publishes nothing.
+Use natty when:
+
+- You want to choose the relay. natty has no default service. It connects only to the relay and to peers.
+- You want few dependencies. natty uses quinn, tokio, rustls, ring and log.
 
 Use a different tool when you need:
 
@@ -179,7 +176,7 @@ dialer accepts only the key that it dialed. The accepting endpoint accepts any
 key. The application decides what that key can do.
 
 The design follows Tailscale's DERP, with its own framing. natty is not
-compatible with DERP. [docs/design.md](docs/design.md) specifies the wire format.
+compatible with DERP. [docs/design.md](docs/design.md) specifies the wire format, and [docs/research.md](docs/research.md) gives the design decisions with sources.
 
 ## Limits
 
