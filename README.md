@@ -54,17 +54,12 @@ This test uses one machine and three terminals. You need a Rust toolchain and a 
    cargo run -p natty-relay -- --cert cert.pem --key key.pem --listen '[::]:4443'
    ```
    The first run compiles for some minutes.
-3. In terminal 2, make sure that the relay answers:
-   ```sh
-   curl --cacert cert.pem https://localhost:4443/health
-   ```
-   The first line is `ok`. Aggregate counters follow.
-4. In terminal 2, start a listener:
+3. In terminal 2, start a listener:
    ```sh
    NATTY_CA=cert.pem cargo run --example pipe -- listen localhost:4443 < /dev/null
    ```
    The listener prints `listening as <key>@localhost:4443`. It serves one peer and then stops.
-5. In terminal 3, connect to the address that the listener printed, and send a line:
+4. In terminal 3, connect to the address that the listener printed, and send a line:
    ```sh
    echo hello | NATTY_CA=cert.pem cargo run --example pipe -- connect <key>@localhost:4443
    ```
@@ -73,13 +68,7 @@ Result: terminal 2 prints `hello`. Terminal 3 prints the byte counts, the RTT an
 
 This test shows that the relay and the API work. It does not test NAT traversal. On one machine, a longer transfer moves to a direct path over loopback, which does not cross a NAT. To test NAT traversal, see [Test across networks](#test-across-networks).
 
-If `listening as` does not appear, the listener cannot reach the relay. The example retries in silence. Do step 3 again. Then examine the certificate and the port.
-
-Notes:
-
-- Each `pipe` run makes a new key. To keep the same key, set
-  `NATTY_KEY=<file>`. The first run creates the file.
-- `NATTY_CA` and `NATTY_KEY` are features of the examples only.
+If `listening as` does not appear, the listener cannot reach the relay. The example retries in silence. To test the relay, run `curl --cacert cert.pem https://localhost:4443/health`. The first line must be `ok`.
 
 ## Use the library
 
@@ -137,7 +126,7 @@ let (mut send, mut recv) = conn.accept_bi().await?;
 
 Before the process exits, call `endpoint.close().await`. Otherwise, peers wait for the idle timeout.
 
-natty re-exports quinn as `natty::quinn`. To keep the same address after a restart, store the key with `SecretKey::seed` and load it with `SecretKey::from_seed`. To read the API documentation, run `cargo doc --open`.
+natty re-exports quinn as `natty::quinn`. To keep the same address after a restart, store the key with `SecretKey::seed` and load it with `SecretKey::from_seed`.
 
 ## Run a relay
 
@@ -187,7 +176,7 @@ The [Dockerfile](Dockerfile) builds a static relay image.
 
 ### Test across networks
 
-You need two peers on different networks, for example a home and an office. Each peer needs a Rust toolchain, a clone of this repository and `cert.pem` from step 3. The peers need only outbound access.
+You need two peers on different networks, for example a home and an office. Each peer needs a Rust toolchain, a clone of this repository and `cert.pem` from step 3.
 
 1. On peer A, start a listener:
    ```sh
@@ -269,13 +258,6 @@ path, but the peer keeps the addresses that it learned.
 natty has had no security review. Do not open a public issue for a
 vulnerability. Report it through the
 [private advisory form](https://github.com/razvandimescu/natty/security/advisories/new).
-
-## Documents
-
-- [docs/design.md](docs/design.md): wire format and protocol rules.
-- [docs/results.md](docs/results.md): measurements on real networks.
-- [docs/research.md](docs/research.md): design decisions, with sources.
-- [ROADMAP.md](ROADMAP.md): phases and gates.
 
 ## License
 
