@@ -6,14 +6,17 @@ A peer address is `<key>@<relay>`: the public key of the peer and its relay. The
 
 [An animated walk-through](https://razvandimescu.github.io/natty/how-it-works.html) shows one connection, step by step.
 
-Status: pre-0.1. The API can change.
+natty is built for the friend-to-friend service sharing in
+[numa](https://github.com/razvandimescu/numa). It has no numa dependency.
+
+Status: pre-0.1. Each 0.0.x release on crates.io can change the API.
 
 - Built: the relay, QUIC through the relay, and hole punching.
 - Measured ([docs/results.md](docs/results.md)):
   - the relay path between two networks;
   - a direct path from behind one NAT to a host without NAT;
-  - a direct path between two NATs that remap on an early packet (home and
-    office, 2026-10-24).
+  - a direct path between one pair of NATs that remap on an early packet
+    (home and office routers, 2026-10-24).
 - Not yet shown: direct paths over IPv6, through double NAT or carrier-grade
   NAT, or between peers a few hops apart.
 - Not started: port mapping and hardening ([ROADMAP.md](ROADMAP.md)).
@@ -21,16 +24,14 @@ Status: pre-0.1. The API can change.
 
 ## When to use natty
 
-natty is built for the friend-to-friend service sharing in
-[numa](https://github.com/razvandimescu/numa). It has no numa dependency.
-
 Use natty when all of these apply:
 
 - You want an encrypted QUIC connection to a key, direct when possible.
-- You want few dependencies. On top of tokio and rustls, natty with QUIC added 8
-  crates to numa's lockfile, and iroh 1.2.0 with port mapping added 131.
-- You want no third-party service by default. iroh uses n0's DNS service and
-  pkarr relay by default ([docs/research.md](docs/research.md)). natty
+- You want few dependencies. With the `quic` feature, natty has 41 crates in its
+  dependency tree on Linux, natty included. In numa's lockfile, natty added 8
+  crates. iroh 1.2.0 with port mapping, which natty does not have, added 131.
+- You want no third-party service by default. iroh 1.2.0 uses n0's DNS service
+  and pkarr relay by default ([docs/research.md](docs/research.md)). natty
   publishes nothing.
 
 Use a different tool when you need:
@@ -39,6 +40,7 @@ Use a different tool when you need:
 - Many transports and peer discovery in one protocol suite, for example libp2p.
 - A mesh, a VPN or an overlay network, for example Tailscale or ZeroTier.
 - Connections to browsers, for example WebRTC.
+- Port mapping or more than one relay for each endpoint now, for example iroh.
 - A stable API now.
 
 ## Quickstart
@@ -74,7 +76,7 @@ If `listening as` does not appear, the listener cannot reach the relay. The exam
 
 ## Use the library
 
-Add natty to `Cargo.toml`:
+Add natty from crates.io:
 
 ```toml
 [dependencies]
@@ -217,11 +219,6 @@ Peers authenticate with raw Ed25519 public keys in TLS 1.3 (RFC 7250). The
 dialer accepts only the key that it dialed. The accepting endpoint accepts any
 key. The application decides what that key can do.
 
-A study measured 4.4 million DCUtR punch attempts in IPFS
-([Trautwein et al., IMC 2026](https://arxiv.org/abs/2604.12484)). 29% failed
-before the punch started, and 70% ± 7.1% of the rest succeeded. So about half of
-all pairs stay on the relay, and the relay path is a normal path.
-
 The design follows Tailscale's DERP, with its own framing. natty is not
 compatible with DERP. [docs/design.md](docs/design.md) specifies the wire format.
 
@@ -251,10 +248,9 @@ The relay sees:
 The relay does not see the QUIC payload. The relay code has no per-session log
 path. It keeps only aggregate counters, which `/health` shows.
 
-An allowed peer can learn the addresses of an endpoint and get a direct path.
-Any other peer that knows `<key>@<relay>` can open a QUIC connection through the
+Any peer that knows `<key>@<relay>` can open a QUIC connection through the
 relay. That peer learns that the endpoint is online. A revoke removes the direct
-path, but the peer keeps the addresses that it learned.
+path, but the revoked peer keeps the addresses that it learned.
 
 ## Security
 
