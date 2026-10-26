@@ -1,11 +1,10 @@
 # natty
 
-natty is a Rust library and a relay server. An application uses them to open an
-encrypted QUIC connection to a peer behind NAT. The application must already
-have the public key of the peer, and both peers must use the same relay. The
-connection uses a direct UDP path when hole punching succeeds. If it does not
-succeed, the relay forwards the encrypted packets. natty has no default relay.
-Each application chooses its relay, and anyone can run one.
+natty is a Rust library and a relay server. An application uses them to open an encrypted QUIC connection to a peer behind NAT. A connection is a `quinn::Connection` from quinn 0.11. The connection uses a direct UDP path when hole punching succeeds. If it does not succeed, the relay forwards the encrypted packets.
+
+A peer address is `<key>@<relay>`: the public key of the peer and its relay. The application must already have this address, and both peers must use the same relay. natty has no default relay. Each application chooses its relay, and anyone can run one.
+
+[An animated walk-through](https://razvandimescu.github.io/natty/how-it-works.html) shows one connection, step by step.
 
 natty is built for the friend-to-friend service sharing in
 [numa](https://github.com/razvandimescu/numa). It has no numa dependency.
@@ -46,10 +45,97 @@ Use a different tool when you need:
 
 ## Quickstart
 
-You need three machines: a relay host and two peers. Each machine needs a Rust
-toolchain and a clone of this repository. Run all commands from the root of the
-repository. The relay host needs a DNS name, for example `relay.example.net`. It
-must accept TCP 443 and UDP 3478. The peers need only outbound access.
+This test uses one machine and three terminals. You need a Rust toolchain and a clone of this repository. Run all commands from the root of the repository.
+
+1. Make a self-signed certificate for `localhost`:
+   ```sh
+   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 365 \
+     -subj /CN=localhost -addext subjectAltName=DNS:localhost \
+     -addext basicConstraints=critical,CA:FALSE -keyout key.pem -out cert.pem
+   ```
+2. In terminal 1, start the relay:
+   ```sh
+   cargo run -p natty-relay -- --cert cert.pem --key key.pem --listen '[::]:4443'
+   ```
+   The first run compiles for some minutes.
+3. In terminal 2, start a listener:
+   ```sh
+   NATTY_CA=cert.pem cargo run --example pipe -- listen localhost:4443 < /dev/null
+   ```
+   The listener prints `listening as <key>@localhost:4443`. It serves one peer and then stops.
+4. In terminal 3, connect to the address that the listener printed, and send a line:
+   ```sh
+   echo hello | NATTY_CA=cert.pem cargo run --example pipe -- connect <key>@localhost:4443
+   ```
+
+Result: terminal 2 prints `hello`. Terminal 3 prints the byte counts, the RTT and `path relay`. This short transfer ends before the punch completes.
+
+This test shows that the relay and the API work. It does not test NAT traversal. On one machine, a longer transfer moves to a direct path over loopback, which does not cross a NAT. To test NAT traversal, see [Test across networks](#test-across-networks).
+
+If `listening as` does not appear, the listener cannot reach the relay. The example retries in silence. To test the relay, run `curl --cacert cert.pem https://localhost:4443/health`. The first line must be `ok`.
+
+## Use the library
+
+Add natty from crates.io:
+
+```toml
+[dependencies]
+natty = "0.0.1"
+```
+
+A sketch. Errors use `?` for brevity. [examples/pipe.rs](examples/pipe.rs) is a
+complete program.
+
+Both peers bind an endpoint on the same relay:
+
+```rust
+use natty::{Endpoint, PublicKey, SecretKey};
+
+// relay_tls is an Arc<natty::quinn::rustls::ClientConfig> that trusts the
+// relay certificate. examples/common/mod.rs makes one with webpki-roots.
+// Both peers must offer the same ALPN. The pipe example uses natty-pipe/1.
+let endpoint = Endpoint::bind(SecretKey::generate(), "relay.example.net", relay_tls, &[b"my-app/1"])?;
+// This waits with no limit while the relay is unreachable, for example
+// because of a bad certificate or a closed port.
+endpoint.relay_state().wait_for(Option::is_some).await?;
+println!("{}@relay.example.net", endpoint.public_key());
+```
+
+The dialer connects to the key of the listener:
+
+```rust
+// A peer address is <key>@<relay>. Parse the part before the @.
+let peer: PublicKey = "<key>".parse()?;
+// The handshake fails unless the peer holds the key `peer`.
+let conn = endpoint.connect(peer).await?;
+let (mut send, mut recv) = conn.open_bi().await?;
+// The listener sees a new stream only when the stream carries a byte.
+send.write_all(b"hello").await?;
+```
+
+The listener accepts any key. The application decides which keys it serves:
+
+```rust
+let conn = endpoint.accept().await.ok_or("endpoint closed")?.await?;
+let key = natty::peer_key(&conn).ok_or("peer without a key")?;
+// trusted is a check of your application, for example a list of friend keys.
+if !trusted(&key) {
+    conn.close(0u32.into(), b"not allowed");
+    return Ok(());
+}
+// allow is not access control. It lets the peer learn the addresses of this
+// endpoint and get a direct path. Without it, the connection uses the relay.
+endpoint.allow(key);
+let (mut send, mut recv) = conn.accept_bi().await?;
+```
+
+Before the process exits, call `endpoint.close().await`. Otherwise, peers wait for the idle timeout.
+
+natty re-exports quinn as `natty::quinn`. To keep the same address after a restart, store the key with `SecretKey::seed` and load it with `SecretKey::from_seed`.
+
+## Run a relay
+
+A relay needs a DNS name, a TLS certificate for that name, TCP 443 and UDP 3478. The peers need only outbound access. These steps use the name `relay.example.net`. Run them from the root of a clone of this repository.
 
 1. On the relay host, build the relay:
    ```sh
@@ -64,106 +150,18 @@ must accept TCP 443 and UDP 3478. The peers need only outbound access.
    If you have a certificate from a public CA, go to step 4. Do not use a plain
    `openssl req -x509` certificate. It has CA:TRUE and no subjectAltName, so
    rustls rejects it.
-3. Copy `cert.pem` to the two peers.
+3. Copy `cert.pem` to the peers.
 4. Start the relay:
    ```sh
    ./target/release/natty-relay --cert cert.pem --key key.pem
    ```
    With a public CA certificate, use its full chain and its key, for example
-   `--cert fullchain.pem --key privkey.pem`. To run the relay without root, add
-   `--listen '[::]:4443'`. Then the relay host must accept TCP 4443, and the
-   relay address in steps 5 to 7 is `relay.example.net:4443`.
-5. On peer A, make sure that the relay answers:
+   `--cert fullchain.pem --key privkey.pem`. To run the relay without root, add `--listen '[::]:4443'`. Then the relay host must accept TCP 4443, and the relay address is `relay.example.net:4443`.
+5. On a peer, make sure that the relay answers:
    ```sh
    curl --cacert cert.pem https://relay.example.net/health
    ```
    The first line is `ok`. Aggregate counters follow.
-6. On peer A, start a listener:
-   ```sh
-   NATTY_CA=cert.pem cargo run --example pipe -- listen relay.example.net < /dev/null
-   ```
-   The first run compiles for some minutes. Then the listener prints
-   `listening as <key>@relay.example.net`. It serves one peer and then stops.
-7. On peer B, connect to the address that peer A printed, and send a line:
-   ```sh
-   echo hello | NATTY_CA=cert.pem cargo run --example pipe -- connect <key>@relay.example.net
-   ```
-
-Result: peer A prints `hello`. Peer B prints the byte counts, the RTT and the
-path: `path relay` or `path direct <address>`.
-
-If `listening as` does not appear after the build, the peer cannot reach the
-relay. The example retries in silence. Do step 5 on that peer again. Then
-examine the certificate, the host name and the open ports.
-
-Notes:
-
-- `path relay` is a normal result. A small transfer can end before the punch
-  completes. Some pairs of NATs never get a direct path.
-- Each `pipe` run makes a new key. To keep the same key, set
-  `NATTY_KEY=<file>`. The first run creates the file.
-- With a certificate from a public CA, remove `NATTY_CA` and `--cacert`.
-  `NATTY_CA` and `NATTY_KEY` are features of the examples only.
-
-To try natty on one machine, use three terminals:
-
-- In step 2, use `localhost` in place of `relay.example.net`. Skip step 3.
-- In step 4, add `--listen '[::]:4443'`.
-- In steps 5 to 7, use `localhost:4443` in place of `relay.example.net`.
-
-## Use the library
-
-Add natty from crates.io:
-
-```toml
-[dependencies]
-natty = "0.0.1"
-```
-
-A sketch. Errors use `?` for brevity. [examples/pipe.rs](examples/pipe.rs) is a
-complete program.
-
-```rust
-use natty::{Endpoint, PublicKey, SecretKey};
-
-// relay_tls is an Arc<rustls::ClientConfig> that trusts the relay
-// certificate. examples/common/mod.rs makes one with tokio-rustls and
-// webpki-roots.
-let endpoint = Endpoint::bind(SecretKey::generate(), "relay.example.net", relay_tls, &[b"my-app/1"])?;
-endpoint.relay_state().wait_for(Option::is_some).await?;
-println!("{}@relay.example.net", endpoint.public_key());
-
-// A peer address is <key>@<relay>. Parse the part before the @.
-let peer: PublicKey = "<key>".parse()?;
-
-// Connect. The handshake fails unless the peer holds the key `peer`.
-let conn = endpoint.connect(peer).await?;
-let (mut send, mut recv) = conn.open_bi().await?;
-// The peer sees a new stream only when the stream carries a byte.
-send.write_all(b"hello").await?;
-
-// Accept. Any key can connect, so check the key before you serve it.
-let conn = endpoint.accept().await.expect("endpoint open").await?;
-let key = natty::peer_key(&conn);
-
-// friend is a PublicKey that your application trusts. An allowed peer can
-// learn the addresses of this endpoint and get a direct path.
-endpoint.allow(friend);
-
-// Call close before the process exits. Otherwise, peers wait for the idle
-// timeout.
-endpoint.close().await;
-```
-
-A connection is a `quinn::Connection` from quinn 0.11. natty re-exports quinn as
-`natty::quinn`. To keep the same address after a restart, store the key with
-`SecretKey::seed` and load it with `SecretKey::from_seed`. To read the API
-documentation, run `cargo doc --open`.
-
-## Run a relay
-
-A relay needs a DNS name, a TLS certificate for that name, TCP 443 and UDP 3478.
-Steps 1 to 5 of the quickstart start and test a relay.
 
 Flags:
 
@@ -181,13 +179,28 @@ Flags:
 
 The [Dockerfile](Dockerfile) builds a static relay image.
 
+### Test across networks
+
+You need two peers on different networks, for example a home and an office. Each peer needs a Rust toolchain, a clone of this repository and `cert.pem` from step 3.
+
+1. On peer A, start a listener:
+   ```sh
+   NATTY_CA=cert.pem cargo run --example pipe -- listen relay.example.net < /dev/null
+   ```
+2. On peer B, connect to the address that peer A printed, and send a line:
+   ```sh
+   echo hello | NATTY_CA=cert.pem cargo run --example pipe -- connect <key>@relay.example.net
+   ```
+
+Peer B prints `path relay` or `path direct <address>`. `path relay` is a normal result. A small transfer can end before the punch completes. Some pairs of NATs never get a direct path.
+
+If `listening as` does not appear, the peer cannot reach the relay. Do step 5 on that peer. Then examine the certificate, the host name and the open ports.
+
+With a certificate from a public CA, remove `NATTY_CA` here and `--cacert` in step 5.
+
 ## How it works
 
-[An animated walk-through](https://razvandimescu.github.io/natty/how-it-works.html)
-shows one connection, step by step.
-
-Each endpoint has an Ed25519 key and one TLS session to a relay. A peer address
-is `<key>@<relay-host[:port]>`.
+Each endpoint has an Ed25519 key and one TLS session to a relay.
 
 1. The dialer sends its QUIC handshake to the relay. The relay forwards it on
    the session of the peer.
@@ -228,6 +241,7 @@ The relay sees:
 - The keys that are online, and their addresses.
 - When each session starts and stops.
 - Which pairs of keys exchange packets, and the byte counts.
+- The ALPN of each connection. The first QUIC packet is not confidential.
 - The local and public addresses of peers that punch. Candidates are signed,
   but not encrypted.
 
