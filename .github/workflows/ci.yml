@@ -3,7 +3,9 @@ name: ci
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
   pull_request:
+    paths-ignore: ['**.md', 'docs/**']
   # Weekly, so a new RustSec advisory shows up without a push.
   schedule:
     - cron: '0 6 * * 1'
