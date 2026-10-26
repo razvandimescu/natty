@@ -1,6 +1,8 @@
 # natty
 
-natty is a Rust library and a relay server. An application uses them to open an encrypted QUIC connection to a peer behind NAT. A peer address is `<key>@<relay>`: the public key of the peer and its relay. The application must already have this address. Both peers must use the same relay and the same ALPN. The connection uses a direct UDP path when hole punching succeeds. If it does not succeed, the relay forwards the encrypted packets. A connection is a `quinn::Connection` from quinn 0.11. natty has no default relay. Each application chooses its relay, and anyone can run one.
+natty is a Rust library and a relay server. An application uses them to open an encrypted QUIC connection to a peer behind NAT. A connection is a `quinn::Connection` from quinn 0.11. The connection uses a direct UDP path when hole punching succeeds. If it does not succeed, the relay forwards the encrypted packets.
+
+A peer address is `<key>@<relay>`: the public key of the peer and its relay. The application must already have this address, and both peers must use the same relay. natty has no default relay. Each application chooses its relay, and anyone can run one.
 
 [An animated walk-through](https://razvandimescu.github.io/natty/how-it-works.html) shows one connection, step by step.
 
@@ -89,6 +91,7 @@ use natty::{Endpoint, PublicKey, SecretKey};
 
 // relay_tls is an Arc<natty::quinn::rustls::ClientConfig> that trusts the
 // relay certificate. examples/common/mod.rs makes one with webpki-roots.
+// Both peers must offer the same ALPN. The pipe example uses natty-pipe/1.
 let endpoint = Endpoint::bind(SecretKey::generate(), "relay.example.net", relay_tls, &[b"my-app/1"])?;
 // This waits with no limit while the relay is unreachable, for example
 // because of a bad certificate or a closed port.
