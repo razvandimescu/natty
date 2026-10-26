@@ -5,6 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Relay server for natty: key-addressed sessions, packet forwarding, STUN"
 repository = "https://github.com/razvandimescu/natty"
+readme = "../README.md"
 categories = ["network-programming"]
 
 [lints]
