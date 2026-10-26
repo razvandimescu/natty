@@ -4,7 +4,7 @@ natty is a Rust library and a relay server. An application uses them to open an 
 
 [An animated walk-through](https://razvandimescu.github.io/natty/how-it-works.html) shows one connection, step by step.
 
-Status: pre-0.1. natty is not on crates.io, and the API can change.
+Status: pre-0.1. The API can change.
 
 - Built: the relay, QUIC through the relay, and hole punching.
 - Measured ([docs/results.md](docs/results.md)):
@@ -72,11 +72,11 @@ If `listening as` does not appear, the listener cannot reach the relay. The exam
 
 ## Use the library
 
-Add natty as a git dependency. Pin a commit, because the API can change:
+Add natty to `Cargo.toml`:
 
 ```toml
 [dependencies]
-natty = { git = "https://github.com/razvandimescu/natty", rev = "<commit>" }
+natty = "0.0.1"
 ```
 
 A sketch. Errors use `?` for brevity. [examples/pipe.rs](examples/pipe.rs) is a
