@@ -269,4 +269,19 @@ mod tests {
             .is_ok());
         assert_eq!(key_from_spki(&[0; 44]), None);
     }
+
+    #[test]
+    fn trusted_key_behind_the_leaf_does_not_authenticate() {
+        let tls = PeerTls::new(&SecretKey::generate(), &[]).unwrap();
+        let (attacker, victim) = (
+            SecretKey::generate().public(),
+            SecretKey::generate().public(),
+        );
+        for expected in [None, Some(victim)] {
+            assert!(tls
+                .verifier(expected)
+                .check(&spki(&attacker), &[spki(&victim)])
+                .is_err());
+        }
+    }
 }
