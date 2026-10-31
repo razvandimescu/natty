@@ -11,6 +11,8 @@ Every section below is specified. The direct path is measured on real networks t
   SubjectPublicKeyInfo and nothing else: no certificate, no chain, no CA.
   The dialer requires the presented key to equal the dialed key. The acceptor
   takes any key and hands it to the application, which decides authorization.
+  The dialer sends no SNI: the server name is the dialed key, and anyone who
+  sees the first QUIC packet of a connection can read it.
 - Separately, the application allows keys to traverse: an allowed key may
   learn this endpoint's addresses and get a direct path (see Punch). Dialing
   allows the dialed key; any other key needs an explicit allow, which can be
@@ -184,21 +186,31 @@ dropped.
 
 ### Punch messages
 
-`magic (4) | type (1) | sender key (32) | body | signature (64)`, where the
-signature is `Ed25519-Sign(sender, "natty punch v1\0" || every preceding
+`magic (4) | type (1) | signer (32) | body | signature (64)`, where the
+signature is `Ed25519-Sign(signer, "natty punch v2\0" || every preceding
 byte)`. It is checked against the key in the message, never against the
-relay's `src`. A message from a key that is not allowed is dropped; over UDP
-this happens before the signature is checked, and such a PROBE gets no
-PROBE_ACK, so the key never hears from the endpoint's sockets.
+relay's `src`.
+
+CANDIDATES go through the relay, signed by the sender's key. CANDIDATES from a
+key that is not allowed are dropped. They carry a probe key: a new Ed25519 key
+that the sender makes for this peer at every punch. CANDIDATES that carry
+another key's probe key are dropped.
+
+PROBE and PROBE_ACK go over UDP, where anyone on the path reads them, so they
+are signed by the sender's probe key, and neither endpoint's key appears. The
+receiver looks the signer up among the probe keys of allowed keys. A signer it
+does not find is dropped before the signature is checked, and such a PROBE
+gets no PROBE_ACK, so a key that is not allowed never hears from the
+endpoint's sockets.
 
 | type | name | path | body |
 |---|---|---|---|
-| 1 | CANDIDATES | relay | reply wanted (u8), addresses (address encoding, repeated) |
-| 2 | PROBE | UDP | nonce (12), zeros (19) |
-| 3 | PROBE_ACK | UDP | nonce (12), observed source address |
+| 1 | CANDIDATES | relay | reply wanted (u8), probe key (32), addresses (address encoding, repeated) |
+| 2 | PROBE | UDP | nonce (12) |
+| 3 | PROBE_ACK | UDP | nonce (12) |
 
-PROBE is padded so a PROBE_ACK is never larger than the probe that caused it;
-answering a replayed probe cannot amplify.
+PROBE and PROBE_ACK are the same size, so answering a replayed probe cannot
+amplify.
 
 ### Punch
 
@@ -240,7 +252,7 @@ During a punch, which lasts 3 s:
 - From 200 ms after the last opener, every 200 ms it sends PROBE to each of the peer's candidates, IPv6 first, then to each address proven for the peer that is not a candidate.
 - It ends early once the peer has an IPv6 direct path.
 
-A PROBE from source `S`, signed by `K`, is answered with PROBE_ACK to `S`. `S`
+A PROBE from source `S`, signed by `K`'s probe key, is answered with PROBE_ACK to `S`. `S`
 becomes proven for `K`, and for no other key: QUIC from `S` is accepted as
 `K`'s, and `S` is probed with `K`'s candidates, which is how a peer behind an
 endpoint-dependent NAT is reached. Proven addresses, the newest 8 per key, are
@@ -248,7 +260,7 @@ kept apart from candidates, so new CANDIDATES from `K` do not drop them. If `S`
 was neither a candidate nor proven and `K` has no direct path, a punch starts
 as in case 3.
 
-A PROBE_ACK from `S`, signed by `K`, counts only if `S` is one of `K`'s
+A PROBE_ACK from `S`, signed by `K`'s probe key, counts only if `S` is one of `K`'s
 candidates or proven addresses (probes went there, so the answer must come
 from there) and its nonce is `K`'s current one. The nonce is renewed after
 every accepted ACK, so each ACK counts once. `S` becomes `K`'s direct path if
@@ -274,7 +286,8 @@ current one IPv4.
 
 Keys online and their addresses, session lifetimes, which pairs exchange
 frames, and forwarded byte counts. CANDIDATES are signed, not encrypted, so the
-relay also sees the local and reflexive addresses of peers that punch. The first QUIC packet of a connection is not confidential, so the relay can read its ALPN. Never
+relay also sees the local and reflexive addresses of peers that punch, and
+their probe keys. The first QUIC packet of a connection is not confidential, so the relay can read its ALPN. Never
 QUIC payload. The code has aggregate
 counters and no per-session log path.
 

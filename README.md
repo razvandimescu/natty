@@ -159,14 +159,16 @@ Flags:
 Each endpoint has an Ed25519 key and one TLS session to a relay.
 
 1. The dialer sends its QUIC handshake to the relay. The relay forwards it on
-   the session of the peer.
+   the session of the peer. If a direct path to the peer is up, the handshake
+   goes on that path.
 2. Each endpoint gets its public address from the STUN responder of the relay.
 3. Allowed peers send signed address candidates through the relay. A peer is
    allowed after `Endpoint::allow` or a dial. IPv6 candidates go first.
 4. Each peer sends an opener to each IPv4 candidate of the other peer. An opener
    is a UDP packet with TTL 2. It makes the mapping in the local NAT and expires
    before the far NAT.
-5. 200 ms later, the peers send UDP probes to each other.
+5. 200 ms later, the peers send UDP probes to each other. A probe is signed
+   with a new key from the candidates, not with the endpoint key.
 6. When a probe gets an answer, the QUIC connection moves to the direct path.
    The relay session stays open as a fallback.
 7. When no probe gets an answer, the relay continues to forward the packets.
@@ -199,8 +201,8 @@ The relay sees:
 - When each session starts and stops.
 - Which pairs of keys exchange packets, and the byte counts.
 - The ALPN of each connection. The first QUIC packet is not confidential.
-- The local and public addresses of peers that punch. Candidates are signed,
-  but not encrypted.
+- The local and public addresses and the probe keys of peers that punch.
+  Candidates are signed, but not encrypted.
 
 The relay does not see the QUIC payload. The relay code has no per-session log
 path. It keeps only aggregate counters, which `/health` shows.
@@ -208,6 +210,23 @@ path. It keeps only aggregate counters, which `/health` shows.
 Any peer that knows `<key>@<relay>` can open a QUIC connection through the
 relay. That peer learns that the endpoint is online. A revoke removes the direct
 path, but the revoked peer keeps the addresses that it learned.
+
+## What the network sees
+
+Anyone on the network path of a peer sees:
+
+- The relay that the peer uses.
+- The punch packets. They are signed, but not encrypted. Each one starts with
+  `*nty` and contains a probe key, not an endpoint key.
+- The ALPN of a connection that starts while a direct path is up.
+
+No endpoint key goes out in clear. Two gaps remain:
+
+- After a network change, keepalives use the old probe key until the next
+  punch. An observer on both networks can link them with that key.
+- An attacker on the path can send packets with the source address of a peer
+  that punched. It can then start a QUIC handshake and get the key of an
+  endpoint that accepts connections.
 
 ## License
 

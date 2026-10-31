@@ -102,23 +102,22 @@ impl Traversal {
                     .set_local(candidates, now, actions);
             }
             Packet::UdpPunch(from, data) => {
-                // Checked before answering, so a key that is not allowed never
-                // hears from this socket; noise costs a lookup, not a signature.
-                let sender = signal::sender(&data);
-                if !sender.is_some_and(|key| self.paths.lock().unwrap().allows(&key)) {
+                // Looked up before the signature is checked, so a key that is
+                // not allowed never hears from this socket; noise costs a
+                // lookup, not a signature.
+                let owner = signal::signer(&data)
+                    .and_then(|signer| self.paths.lock().unwrap().owner(&signer));
+                let Some((key, mine)) = owner else {
                     return;
-                }
+                };
                 match Message::open(&data) {
-                    Some((key, Message::Probe(nonce))) => {
-                        let ack = Message::ProbeAck {
-                            nonce,
-                            observed: from,
-                        };
-                        self.udp.send_to(&ack.seal(&self.secret), from);
+                    Some((_, Message::Probe(nonce))) => {
+                        let ack = Message::ProbeAck(nonce).seal(&mine.secret());
+                        self.udp.send_to(&ack, from);
                         let mut paths = self.paths.lock().unwrap();
                         paths.on_probe(key, from, now, actions);
                     }
-                    Some((key, Message::ProbeAck { nonce, .. })) => {
+                    Some((_, Message::ProbeAck(nonce))) => {
                         let mut paths = self.paths.lock().unwrap();
                         paths.on_ack(key, from, nonce, now);
                     }
@@ -126,9 +125,17 @@ impl Traversal {
                 }
             }
             Packet::RelayPunch(data) => {
-                if let Some((key, Message::Candidates { reply, addrs })) = Message::open(&data) {
+                if let Some((
+                    key,
+                    Message::Candidates {
+                        reply,
+                        probe_key,
+                        addrs,
+                    },
+                )) = Message::open(&data)
+                {
                     let mut paths = self.paths.lock().unwrap();
-                    paths.on_candidates(key, reply, addrs, now, actions);
+                    paths.on_candidates(key, probe_key, reply, addrs, now, actions);
                 }
             }
         }
@@ -142,19 +149,20 @@ impl Traversal {
         let local = self.paths.lock().unwrap().local().to_vec();
         for action in actions.drain(..) {
             match action {
-                Action::Offer { to, reply } => {
+                Action::Offer { to, reply, mine } => {
                     let message = Message::Candidates {
                         reply,
+                        probe_key: mine.public,
                         addrs: local.clone(),
                     };
                     let data = message.seal(&self.secret);
                     trace!("candidates to {to}: {local:?}");
                     let _ = self.relay.try_send(Frame::Send { dst: to, data });
                 }
-                Action::Probe { to, nonce } | Action::Open { to, nonce } => {
+                Action::Probe { to, nonce, mine } | Action::Open { to, nonce, mine } => {
                     let (_, probe) = match &mut sealed {
                         Some(cached) if cached.0 == nonce => cached,
-                        slot => slot.insert((nonce, Message::Probe(nonce).seal(&self.secret))),
+                        slot => slot.insert((nonce, Message::Probe(nonce).seal(&mine.secret()))),
                     };
                     if matches!(action, Action::Open { .. }) {
                         trace!("opener to {to}");
@@ -201,5 +209,79 @@ impl Traversal {
                 sleep(STUN_RETRY).await;
             }
         }));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::net::UdpSocket;
+
+    use super::signal::ProbeKey;
+    use super::*;
+
+    fn names(packet: &[u8], key: &crate::PublicKey) -> bool {
+        packet.windows(key.0.len()).any(|w| w == key.0)
+    }
+
+    async fn next(socket: &UdpSocket) -> Vec<u8> {
+        let mut buf = [0; 1500];
+        let n = timeout(Duration::from_secs(1), socket.recv(&mut buf))
+            .await
+            .expect("a datagram")
+            .unwrap();
+        buf[..n].to_vec()
+    }
+
+    #[tokio::test]
+    async fn punch_datagrams_name_neither_key() {
+        let (ours, peer) = (SecretKey::generate(), SecretKey::generate());
+        let (us, them) = (ours.public(), peer.public());
+        let wire = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let from = wire.local_addr().unwrap();
+        let (relay, _relayed) = mpsc::channel(8);
+        let t = Traversal {
+            secret: ours,
+            relay_host: String::new(),
+            udp: Arc::new(Udp::bind().unwrap()),
+            relay,
+            paths: Arc::default(),
+        };
+        for socket in t.udp.sockets() {
+            socket.writable().await.unwrap();
+        }
+        {
+            let mut paths = t.paths.lock().unwrap();
+            paths.allow(them);
+            paths.touch(them, Instant::now());
+        }
+        let (mut stun, mut actions) = (Stun::default(), Vec::new());
+        let probe_key = ProbeKey::random();
+        let offer = Message::Candidates {
+            reply: true,
+            probe_key: probe_key.public,
+            addrs: vec![from],
+        };
+        t.handle(
+            Packet::RelayPunch(offer.seal(&peer)),
+            &mut stun,
+            &mut actions,
+        );
+        t.perform(&mut actions);
+        let opener = next(&wire).await;
+
+        let probe = Message::Probe([9; 12]).seal(&probe_key.secret());
+        t.handle(Packet::UdpPunch(from, probe), &mut stun, &mut actions);
+        let ack = next(&wire).await;
+
+        assert!(matches!(
+            Message::open(&opener),
+            Some((_, Message::Probe(_)))
+        ));
+        let answer = Message::open(&ack).map(|(_, message)| message);
+        assert_eq!(answer, Some(Message::ProbeAck([9; 12])));
+        for packet in [opener, ack] {
+            assert!(!names(&packet, &us), "{packet:?}");
+            assert!(!names(&packet, &them), "{packet:?}");
+        }
     }
 }

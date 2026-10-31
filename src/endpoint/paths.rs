@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use log::debug;
 
-use super::signal::{Nonce, MAX_CANDIDATES};
+use super::signal::{Nonce, ProbeKey, MAX_CANDIDATES};
 use super::socket::virtual_addr;
 use crate::key::random;
 use crate::wire::canonical;
@@ -38,10 +38,12 @@ pub(crate) enum Action {
     Offer {
         to: PublicKey,
         reply: bool,
+        mine: ProbeKey,
     },
     Probe {
         to: SocketAddr,
         nonce: Nonce,
+        mine: ProbeKey,
     },
     /// A probe sent with a TTL that expires past the local NAT: it opens the
     /// mapping toward `to` without landing early at the far NAT, which makes
@@ -49,6 +51,7 @@ pub(crate) enum Action {
     Open {
         to: SocketAddr,
         nonce: Nonce,
+        mine: ProbeKey,
     },
 }
 
@@ -75,6 +78,9 @@ struct Peer {
     proven: Vec<SocketAddr>,
     direct: Option<Direct>,
     nonce: Nonce,
+    mine: ProbeKey,
+    /// The peer's probe key, from its CANDIDATES.
+    theirs: Option<PublicKey>,
     punch: Option<Punch>,
     punched: Option<Instant>,
     offered: Option<Instant>,
@@ -136,6 +142,7 @@ impl Peer {
         out.push(Action::Offer {
             to: self.key,
             reply,
+            mine: self.mine,
         });
     }
 
@@ -154,6 +161,7 @@ impl Peer {
             probe_from: now + OPENER_LEAD,
         });
         self.punched = Some(now);
+        self.mine = ProbeKey::random();
         self.offer(initiator, now, out);
         self.open(self.targets(), now, out);
     }
@@ -166,18 +174,18 @@ impl Peer {
     }
 
     fn probe_candidates(&self, out: &mut Vec<Action>) {
-        let nonce = self.nonce;
+        let (nonce, mine) = (self.nonce, self.mine);
         out.extend(
             self.targets()
                 .into_iter()
-                .map(|to| Action::Probe { to, nonce }),
+                .map(|to| Action::Probe { to, nonce, mine }),
         );
     }
 
     /// Opens `addrs` during a punch and holds probing back until the openers
     /// have left.
     fn open(&mut self, addrs: Vec<SocketAddr>, now: Instant, out: &mut Vec<Action>) {
-        let nonce = self.nonce;
+        let (nonce, mine) = (self.nonce, self.mine);
         let Some(punch) = &mut self.punch else {
             return;
         };
@@ -185,7 +193,7 @@ impl Peer {
             return;
         }
         punch.probe_from = punch.probe_from.max(now + OPENER_LEAD);
-        out.extend(addrs.into_iter().map(|to| Action::Open { to, nonce }));
+        out.extend(addrs.into_iter().map(|to| Action::Open { to, nonce, mine }));
     }
 
     fn knows(&self, addr: &SocketAddr) -> bool {
@@ -234,6 +242,8 @@ impl Paths {
             proven: Vec::new(),
             direct: None,
             nonce: random(),
+            mine: ProbeKey::random(),
+            theirs: None,
             punch: None,
             punched: None,
             offered: None,
@@ -287,8 +297,12 @@ impl Paths {
         }
     }
 
-    pub(crate) fn allows(&self, key: &PublicKey) -> bool {
-        self.allowed.contains(key)
+    /// The allowed key whose probe key is `signer`, with ours for it.
+    pub(crate) fn owner(&self, signer: &PublicKey) -> Option<(PublicKey, ProbeKey)> {
+        self.peers
+            .values()
+            .find(|p| p.theirs == Some(*signer) && self.allowed.contains(&p.key))
+            .map(|p| (p.key, p.mine))
     }
 
     pub(crate) fn allow(&mut self, key: PublicKey) {
@@ -352,18 +366,22 @@ impl Paths {
     pub(crate) fn on_candidates(
         &mut self,
         key: PublicKey,
+        probe_key: PublicKey,
         reply: bool,
         addrs: Vec<SocketAddr>,
         now: Instant,
         out: &mut Vec<Action>,
     ) {
         let room = self.has_room();
-        if !self.allowed.contains(&key) {
+        // Probes find their key by probe key, so another key may not take one.
+        let taken = self.owner(&probe_key).is_some_and(|(k, _)| k != key);
+        if taken || !self.allowed.contains(&key) {
             return;
         }
         let Some(peer) = self.peers.get_mut(&virtual_addr(&key)) else {
             return;
         };
+        peer.theirs = Some(probe_key);
         let addrs = sanitize(addrs);
         let fresh = addrs
             .iter()
@@ -538,6 +556,7 @@ fn upkeep(peer: &mut Peer, now: Instant, out: &mut Vec<Action>) {
         out.push(Action::Probe {
             to: direct.addr,
             nonce: peer.nonce,
+            mine: peer.mine,
         });
     }
 }
@@ -571,7 +590,7 @@ mod tests {
     fn nonce_for(out: &[Action], target: SocketAddr) -> Nonce {
         out.iter()
             .find_map(|a| match a {
-                Action::Probe { to, nonce } if *to == target => Some(*nonce),
+                Action::Probe { to, nonce, .. } if *to == target => Some(*nonce),
                 _ => None,
             })
             .expect("probe sent")
@@ -584,6 +603,15 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn announced(out: &[Action]) -> PublicKey {
+        out.iter()
+            .find_map(|a| match a {
+                Action::Offer { mine, .. } => Some(mine.public),
+                _ => None,
+            })
+            .expect("an offer")
     }
 
     fn allowed(paths: &mut Paths, key: PublicKey, now: Instant) -> SocketAddr {
@@ -599,7 +627,7 @@ mod tests {
         paths.tick(now, &mut out);
         assert_eq!(offers(&out), [true]);
         out.clear();
-        paths.on_candidates(key, false, vec![v4, v6], now, &mut out);
+        paths.on_candidates(key, PublicKey(random()), false, vec![v4, v6], now, &mut out);
         assert!(offers(&out).is_empty(), "an answer is not answered");
         assert_eq!(openers(&out), [v6, v4]);
         assert!(probes(&out).is_empty(), "probes wait for the openers");
@@ -727,7 +755,7 @@ mod tests {
         let now = Instant::now();
         let mut out = Vec::new();
         allowed(&mut paths, key, now);
-        paths.on_candidates(key, true, vec![], now, &mut out);
+        paths.on_candidates(key, PublicKey(random()), true, vec![], now, &mut out);
         assert_eq!(offers(&out), [false]);
 
         out.clear();
@@ -751,7 +779,14 @@ mod tests {
         paths.on_ack(key, learned, nonce, now);
         assert_eq!(paths.direct(&key), Some(learned));
 
-        paths.on_candidates(key, true, vec![addr("198.51.100.1:1000")], now, &mut out);
+        paths.on_candidates(
+            key,
+            PublicKey(random()),
+            true,
+            vec![addr("198.51.100.1:1000")],
+            now,
+            &mut out,
+        );
         let later = now + KEEPALIVE;
         out.clear();
         paths.tick(later, &mut out);
@@ -780,7 +815,7 @@ mod tests {
         paths.tick(now, &mut out);
         paths.relay_connected(now, &mut out);
         let named = addr("198.51.100.9:9");
-        paths.on_candidates(key, true, vec![named], now, &mut out);
+        paths.on_candidates(key, PublicKey(random()), true, vec![named], now, &mut out);
         paths.on_probe(key, named, now, &mut out);
         paths.on_ack(key, named, paths.peers[&virt].nonce, now);
         paths.tick(now + TICK, &mut out);
@@ -869,7 +904,14 @@ mod tests {
             .copied()
             .unwrap();
         out.clear();
-        paths.on_candidates(waiting, true, vec![addr("198.51.100.9:9")], now, &mut out);
+        paths.on_candidates(
+            waiting,
+            PublicKey(random()),
+            true,
+            vec![addr("198.51.100.9:9")],
+            now,
+            &mut out,
+        );
         assert_eq!(offers(&out), [false], "answered, not probed");
         assert!(probes(&out).is_empty());
 
@@ -888,7 +930,7 @@ mod tests {
         let v4 = addr("198.51.100.1:1000");
         allowed(&mut paths, key, now);
         let mut out = Vec::new();
-        paths.on_candidates(key, true, vec![v4], now, &mut out);
+        paths.on_candidates(key, PublicKey(random()), true, vec![v4], now, &mut out);
         assert_eq!(offers(&out), [false]);
         assert_eq!(openers(&out), [v4]);
         assert!(probes(&out).is_empty());
@@ -919,13 +961,49 @@ mod tests {
     }
 
     #[test]
+    fn each_punch_sends_a_new_probe_key() {
+        let mut paths = Paths::default();
+        let key = PublicKey([16; 32]);
+        let now = Instant::now();
+        allowed(&mut paths, key, now);
+        let mut out = Vec::new();
+        paths.tick(now, &mut out);
+        let first = announced(&out);
+
+        let later = now + INITIATE_GAP;
+        paths.touch(key, later);
+        out.clear();
+        paths.tick(later, &mut out);
+        assert_ne!(announced(&out), first);
+    }
+
+    #[test]
+    fn a_probe_key_names_one_allowed_key() {
+        let mut paths = Paths::default();
+        let (a, b) = (PublicKey([16; 32]), PublicKey([17; 32]));
+        let now = Instant::now();
+        allowed(&mut paths, a, now);
+        allowed(&mut paths, b, now);
+        let theirs = PublicKey(random());
+        let mut out = Vec::new();
+        paths.on_candidates(a, theirs, false, vec![], now, &mut out);
+        paths.on_candidates(b, theirs, false, vec![], now, &mut out);
+        assert_eq!(offers(&out), [false], "b's CANDIDATES are dropped");
+        let owner = paths.owner(&theirs).map(|(key, mine)| (key, mine.public));
+        assert_eq!(owner, Some((a, announced(&out))));
+
+        paths.revoke(&a);
+        assert_eq!(paths.owner(&theirs), None);
+    }
+
+    #[test]
     fn idle_peers_are_forgotten_with_their_addresses() {
         let mut paths = Paths::default();
         let key = PublicKey([6; 32]);
         let now = Instant::now();
         let mut out = Vec::new();
         allowed(&mut paths, key, now);
-        paths.on_candidates(key, false, vec![], now, &mut out);
+        paths.on_candidates(key, PublicKey(random()), false, vec![], now, &mut out);
         let from = addr("198.51.100.8:4000");
         paths.on_probe(key, from, now, &mut out);
         assert_eq!(paths.quic_from(from, now), Some(virtual_addr(&key)));
@@ -933,6 +1011,9 @@ mod tests {
         paths.tick(now + PEER_IDLE, &mut out);
         assert!(!paths.peers.contains_key(&virtual_addr(&key)));
         assert_eq!(paths.quic_from(from, now + PEER_IDLE), None);
-        assert!(paths.allows(&key), "forgetting routing keeps the allow");
+        assert!(
+            paths.allowed.contains(&key),
+            "forgetting routing keeps the allow"
+        );
     }
 }
