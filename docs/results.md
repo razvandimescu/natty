@@ -32,7 +32,7 @@ Opener test: send to A, send one datagram to B with TTL n, then the VPS sends fr
 Findings:
 
 1. Both NATs remap on an early packet, in all three runs on each network. This explains the failed punch: the first probe of each side arrives early at the other NAT.
-2. A datagram with TTL 2 goes through the local NAT, makes the mapping, and expires before the VPS. The ICMP time-exceeded reply does not remove the mapping. TTL 1 expires before the NAT and makes no mapping.
+2. A datagram with TTL 2 goes through the local NAT, opens it to B, and expires before the VPS. It uses the mapping that the datagram to A made. The ICMP time-exceeded reply does not close the NAT to B. TTL 1 expires before the NAT and opens nothing.
 3. If both sides send an opener before their probes, no probe arrives early. This predicts a direct path for this pair.
 4. natty with openers (TTL 2, probes 200 ms later): the same pair went direct. The first probe arrived 0.42 s after the punch started, and both sides had a direct path 0.49 s after it started. All later probes came from the offered ports. A peer that still ran natty without openers also went direct with the laptop, so an opener on one side was enough here.
 

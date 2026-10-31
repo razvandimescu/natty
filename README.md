@@ -164,7 +164,7 @@ Each endpoint has an Ed25519 key and one TLS session to a relay.
 3. Allowed peers send signed address candidates through the relay. A peer is
    allowed after `Endpoint::allow` or a dial. IPv6 candidates go first.
 4. Each peer sends an opener to each IPv4 candidate of the other peer. An opener
-   is a UDP packet with TTL 2. It makes the mapping in the local NAT and expires
+   is a UDP packet with TTL 2. It opens the local NAT to the peer and expires
    before the far NAT.
 5. 200 ms later, the peers send UDP probes to each other.
 6. When a probe gets an answer, the QUIC connection moves to the direct path.
