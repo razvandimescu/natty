@@ -130,8 +130,6 @@ h1 em { color: var(--accent); }
 
 .stun-line { fill: none; stroke: var(--relay); stroke-width: 1.3; stroke-dasharray: 2 5; opacity: 0; transition: opacity .4s; }
 #map[data-step="2"] .stun-line { opacity: .9; }
-.stun-gap { opacity: 0; transition: opacity .25s; }
-.gap-you .stun-gap.you, .gap-bea .stun-gap.bea { opacity: 1; }
 
 .direct { fill: none; stroke: var(--faint); stroke-width: 1.5; stroke-dasharray: 3 7; opacity: 0; transition: opacity .4s; }
 .direct-try .direct, .direct-fail .direct { opacity: 1; }
@@ -374,8 +372,6 @@ html:not(.js) :is(#next, .hint) { display: none; }
       </g>
       <rect class="gap" x="240" y="297" width="20" height="20"/>
       <rect class="gap" x="740" y="297" width="20" height="20"/>
-      <rect class="gap stun-gap you" x="292" y="297" width="16" height="20"/>
-      <rect class="gap stun-gap bea" x="692" y="297" width="16" height="20"/>
 
       <g class="door you">
         <rect class="door-gap" x="325" y="438" width="16" height="28"/>
@@ -390,8 +386,8 @@ html:not(.js) :is(#next, .hint) { display: none; }
         <line class="flap" x1="667" y1="438" x2="667" y2="466" style="transform-origin: 667px 438px"/>
       </g>
 
-      <path id="s-you" class="route stun-line" d="M182 422 C198 372 280 335 300 307 C320 279 490 205 500 136"/>
-      <path id="s-bea" class="route stun-line" d="M818 422 C802 372 720 335 700 307 C680 279 510 205 500 136"/>
+      <path id="s-you" class="route stun-line" d="M202 452 L345 452 C410 452 495 300 500 136"/>
+      <path id="s-bea" class="route stun-line" d="M798 452 L655 452 C590 452 505 300 500 136"/>
 
       <g class="pipes">
         <path id="r-you" class="route pipe draw" d="M160 422 C165 368 230 335 250 307 C270 279 430 200 440 136"/>
@@ -469,14 +465,14 @@ html:not(.js) :is(#next, .hint) { display: none; }
         <span class="n" aria-hidden="true">2</span>
         <h2>Public addresses from STUN</h2>
         <p>Each endpoint sends a STUN request from its UDP socket to the relay. The relay answers with the source address that it saw. That address is the public address that the NAT gave to the socket.</p>
-        <p>The probes in step 3 use the same socket.</p>
+        <p>The probes in step 3 use the same socket. Most NATs send them through the same opening, with the same public address. For now the NAT lets in only the answer from the relay.</p>
       </li>
       <li data-step="3">
         <span class="n" aria-hidden="true">3</span>
         <h2>Candidates, then probes</h2>
         <p>Your endpoint allowed Bea's key when you dialed her. Bea's application allowed your key. Only allowed keys get candidates and probes.</p>
         <p>Each of you sends candidates through the relay: a local and a public address. Candidates are signed, but not encrypted.</p>
-        <p>Then each of you sends an opener to each candidate of the other: a UDP packet with TTL&nbsp;2. It opens your NAT for Bea and expires before her NAT. Some NATs change the port when a packet from outside arrives first, so the opener must not reach her.</p>
+        <p>Then each of you sends an opener to each candidate of the other: a UDP packet with TTL&nbsp;2. It goes to Bea through the opening from step 2, so your NAT now lets in packets from her. It expires before her NAT. Some NATs change the port when a packet from outside arrives first, so the opener must not reach her.</p>
         <p>200&nbsp;ms later, both of you send probes. Both NATs are open now.</p>
       </li>
       <li data-step="4">
@@ -652,6 +648,8 @@ html:not(.js) :is(#next, .hint) { display: none; }
   const OWN_WALL = 0.2;
   // Where an opener expires: past its own NAT, well before the far one.
   const OPENER_TTL = 0.3;
+  // STUN leaves by the same door, as far from the device.
+  const STUN_WALL = (OWN_WALL * route.direct.len) / route['s-you'].len;
 
   const STEPS = [
     () => {
@@ -675,10 +673,14 @@ html:not(.js) :is(#next, .hint) { display: none; }
       for (const [side, at] of [['you', 200], ['bea', 500]]) {
         fly(`s-${side}`, 'stun', {
           at,
-          mark: [0.27, () => flag(`gap-${side}`)],
+          mark: [STUN_WALL, () => flag(`door-${side}`)],
           then: t => {
             reveal(`stun-${side}`);
-            fly(`s-${side}`, 'stun', { at: t, back: true, then: () => flag(`pub-${side}`) });
+            fly(`s-${side}`, 'stun', {
+              at: t,
+              back: true,
+              then: () => { flag(`pub-${side}`); flag(`door-${side}`, false); },
+            });
           },
         });
       }
@@ -729,10 +731,10 @@ html:not(.js) :is(#next, .hint) { display: none; }
     svg.dataset.step = step;
 
     const on = new Set();
-    if (step >= 3) ['gap-you', 'gap-bea', 'pub-you', 'pub-bea'].forEach(c => on.add(c));
+    if (step >= 3) ['pub-you', 'pub-bea'].forEach(c => on.add(c));
     if (step === 4) ['door-you', 'door-bea', 'direct-try'].forEach(c => on.add(c));
     if (step === 5) on.add('direct-fail');
-    for (const c of ['gap-you', 'gap-bea', 'pub-you', 'pub-bea', 'door-you', 'door-bea', 'direct-try', 'direct-up', 'direct-fail']) flag(c, on.has(c));
+    for (const c of ['pub-you', 'pub-bea', 'door-you', 'door-bea', 'direct-try', 'direct-up', 'direct-fail']) flag(c, on.has(c));
     label(step >= 2 ? 'path relay' : '');
 
     bytes.ab = step >= 2 ? 2400 : 0;

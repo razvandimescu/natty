@@ -92,11 +92,11 @@ that arrives from it (office to a public host went direct). Two are not.
 
 Candidate mitigation, untested here: send the first probes with a TTL that
 expires past the local NAT but before the peer's, so they open the local
-mapping without landing early at the far end. Needs a hop count per path and
+NAT without landing early at the far end. Needs a hop count per path and
 does not help when the NATs are few hops apart. Measure how common the
 behaviour is before building it.
 
-Measured 2026-10-24 on both routers: TTL 2 makes the local mapping and expires before the far end, and the reply from the far end then gets through with the port kept. See docs/results.md.
+Measured 2026-10-24 on both routers: TTL 2 opens the local NAT to the far end and expires before it, and the reply from the far end then gets through with the port kept. See docs/results.md.
 
 ## QUIC-native traversal: not settled
 

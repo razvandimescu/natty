@@ -236,7 +236,7 @@ During a punch, which lasts 3 s:
 - CANDIDATES with reply wanted are answered with CANDIDATES without it, at
   most once per 500 ms per peer. A reply never asks for a reply, so the
   exchange ends.
-- At the start, and for each candidate that arrives later, it sends one PROBE with IPv4 TTL 2 (an opener). The opener passes a NAT on the first hop and expires before the peer, so it makes the local mapping without arriving early at the peer's NAT, which makes some NATs remap (docs/results.md, 2026-10-24). IPv6 gets no opener. The TTL is set on the shared socket for that one send.
+- At the start, and for each candidate that arrives later, it sends one PROBE with IPv4 TTL 2 (an opener). The opener passes a NAT on the first hop and expires before the peer, so it opens the local NAT to the peer without arriving early at the peer's NAT, which makes some NATs remap (docs/results.md, 2026-10-24). IPv6 gets no opener. The TTL is set on the shared socket for that one send.
 - From 200 ms after the last opener, every 200 ms it sends PROBE to each of the peer's candidates, IPv6 first, then to each address proven for the peer that is not a candidate.
 - It ends early once the peer has an IPv6 direct path.
 
