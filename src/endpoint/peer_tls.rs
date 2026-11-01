@@ -72,6 +72,13 @@ impl PeerTls {
     }
 
     pub(crate) fn client_config(&self, peer: PublicKey) -> io::Result<quinn::ClientConfig> {
+        let quic = QuicClientConfig::try_from(self.client_tls(peer)?).map_err(io::Error::other)?;
+        let mut config = quinn::ClientConfig::new(Arc::new(quic));
+        config.transport_config(transport());
+        Ok(config)
+    }
+
+    fn client_tls(&self, peer: PublicKey) -> io::Result<ClientConfig> {
         let mut tls = ClientConfig::builder_with_provider(self.provider.clone())
             .with_protocol_versions(&[&version::TLS13])
             .map_err(io::Error::other)?
@@ -81,10 +88,8 @@ impl PeerTls {
                 self.key.clone(),
             )));
         tls.alpn_protocols = self.alpn.clone();
-        let quic = QuicClientConfig::try_from(tls).map_err(io::Error::other)?;
-        let mut config = quinn::ClientConfig::new(Arc::new(quic));
-        config.transport_config(transport());
-        Ok(config)
+        tls.enable_sni = false;
+        Ok(tls)
     }
 
     fn verifier(&self, expected: Option<PublicKey>) -> PeerVerifier {
@@ -238,6 +243,8 @@ impl ClientCertVerifier for PeerVerifier {
 
 #[cfg(test)]
 mod tests {
+    use tokio_rustls::rustls::quic::{ClientConnection, Version};
+
     use super::*;
 
     fn spki(key: &PublicKey) -> CertificateDer<'static> {
@@ -258,6 +265,19 @@ mod tests {
         assert!(verifier
             .check(&CertificateDer::from(vec![0; 44]), &[])
             .is_err());
+    }
+
+    #[test]
+    fn client_hello_omits_the_dialed_key() {
+        let tls = PeerTls::new(&SecretKey::generate(), &[]).unwrap();
+        let peer = SecretKey::generate().public();
+        let dialed = peer.to_string();
+        let name = ServerName::try_from(dialed.clone()).unwrap();
+        let config = Arc::new(tls.client_tls(peer).unwrap());
+        let mut client = ClientConnection::new(config, Version::V1, name, Vec::new()).unwrap();
+        let mut hello = Vec::new();
+        client.write_hs(&mut hello);
+        assert!(!hello.windows(dialed.len()).any(|w| w == dialed.as_bytes()));
     }
 
     #[test]
