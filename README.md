@@ -158,9 +158,8 @@ Flags:
 
 Each endpoint has an Ed25519 key and one TLS session to a relay.
 
-1. The dialer sends its QUIC handshake to the relay. The relay forwards it on
-   the session of the peer. If a direct path to the peer is up, the handshake
-   goes on that path.
+1. The dialer starts its QUIC handshake through the relay, also when a direct
+   path to the peer is up. The relay forwards it on the session of the peer.
 2. Each endpoint gets its public address from the STUN responder of the relay.
 3. Allowed peers send signed address candidates through the relay. A peer is
    allowed after `Endpoint::allow` or a dial. IPv6 candidates go first.
@@ -218,15 +217,11 @@ Anyone on the network path of a peer sees:
 - The relay that the peer uses.
 - The punch packets. They are signed, but not encrypted. Each one starts with
   `*nty` and contains a probe key, not an endpoint key.
-- The ALPN of a connection that starts while a direct path is up.
 
-No endpoint key goes out in clear. Two gaps remain:
+No endpoint key goes out in clear. One gap remains:
 
 - After a network change, keepalives use the old probe key until the next
   punch. An observer on both networks can link them with that key.
-- An attacker on the path can send packets with the source address of a peer
-  that punched. It can then start a QUIC handshake and get the key of an
-  endpoint that accepts connections.
 
 ## License
 

@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use natty::quinn::Connection;
 use natty::wire::{self, CloseReason, Frame};
 use natty::{Endpoint, SecretKey};
 use natty_relay::{Config, Relay};
@@ -324,6 +325,13 @@ async fn endpoint(h: &Harness, secret: SecretKey) -> Endpoint {
     endpoint
 }
 
+async fn connected(a: &Endpoint, b: &Endpoint) -> (Connection, Connection) {
+    let (dialed, accepted) = tokio::join!(a.connect(b.public_key()), async {
+        b.accept().await.unwrap().await
+    });
+    (dialed.unwrap(), accepted.unwrap())
+}
+
 #[tokio::test]
 async fn endpoints_exchange_a_quic_stream_through_the_relay() {
     let h = start(0, 16).await;
@@ -389,10 +397,7 @@ async fn endpoints_punch_a_direct_path_that_carries_the_data() {
     let a = endpoint(&h, SecretKey::generate()).await;
     let b = endpoint(&h, SecretKey::generate()).await;
     b.allow(a.public_key());
-    let (dialed, accepted) = tokio::join!(a.connect(b.public_key()), async {
-        b.accept().await.unwrap().await
-    });
-    let (conn, accepted) = (dialed.unwrap(), accepted.unwrap());
+    let (conn, accepted) = connected(&a, &b).await;
 
     tokio::time::timeout(Duration::from_secs(10), async {
         while a.direct_addr(&b.public_key()).is_none() || b.direct_addr(&a.public_key()).is_none() {
@@ -422,6 +427,14 @@ async fn endpoints_punch_a_direct_path_that_carries_the_data() {
         relayed < 16 * 1024,
         "{relayed} bytes still went through the relay"
     );
+
+    let before = forwarded_bytes(&h).await;
+    tokio::time::timeout(Duration::from_secs(3), connected(&a, &b))
+        .await
+        .expect("handshake stalled on the direct path");
+    // The first Initial datagram of each side, padded to 1200 bytes.
+    let relayed = forwarded_bytes(&h).await - before;
+    assert!(relayed >= 2 * 1200, "{relayed} bytes relayed");
 }
 
 #[tokio::test]
@@ -429,10 +442,7 @@ async fn unallowed_dialer_is_served_through_the_relay_only() {
     let h = start(0, 16).await;
     let a = endpoint(&h, SecretKey::generate()).await;
     let b = endpoint(&h, SecretKey::generate()).await;
-    let (dialed, accepted) = tokio::join!(a.connect(b.public_key()), async {
-        b.accept().await.unwrap().await
-    });
-    let (conn, accepted) = (dialed.unwrap(), accepted.unwrap());
+    let (conn, accepted) = connected(&a, &b).await;
 
     let payload = vec![7u8; 256 * 1024];
     let ((), received) = tokio::join!(
@@ -460,10 +470,7 @@ async fn idle_connection_outlives_the_quic_idle_timeout() {
     let h = start(0, 16).await;
     let a = endpoint(&h, SecretKey::generate()).await;
     let b = endpoint(&h, SecretKey::generate()).await;
-    let (dialed, accepted) = tokio::join!(a.connect(b.public_key()), async {
-        b.accept().await.unwrap().await
-    });
-    let (conn, accepted) = (dialed.unwrap(), accepted.unwrap());
+    let (conn, accepted) = connected(&a, &b).await;
 
     // quinn's default idle timeout is 30 s.
     tokio::time::sleep(Duration::from_secs(33)).await;
@@ -476,10 +483,7 @@ async fn closed_endpoint_tells_its_peers_before_it_goes() {
     let h = start(0, 16).await;
     let a = endpoint(&h, SecretKey::generate()).await;
     let b = endpoint(&h, SecretKey::generate()).await;
-    let (dialed, accepted) = tokio::join!(a.connect(b.public_key()), async {
-        b.accept().await.unwrap().await
-    });
-    let (_conn, accepted) = (dialed.unwrap(), accepted.unwrap());
+    let (_conn, accepted) = connected(&a, &b).await;
 
     a.close().await;
     drop(a);

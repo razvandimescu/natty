@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use log::debug;
 
 use super::signal::{Nonce, ProbeKey, MAX_CANDIDATES};
-use super::socket::virtual_addr;
+use super::socket::{is_initial, virtual_addr};
 use crate::key::random;
 use crate::wire::canonical;
 use crate::PublicKey;
@@ -252,8 +252,16 @@ impl Paths {
         addr
     }
 
-    /// QUIC from a real address; `None` unless the address is proven.
-    pub(crate) fn quic_from(&mut self, from: SocketAddr, now: Instant) -> Option<SocketAddr> {
+    /// QUIC from a real address; `None` for an Initial or an unproven address.
+    pub(crate) fn quic_from(
+        &mut self,
+        from: SocketAddr,
+        data: &[u8],
+        now: Instant,
+    ) -> Option<SocketAddr> {
+        if is_initial(data) {
+            return None;
+        }
         let addr = *self.proven.get(&from)?;
         let peer = self.peers.get_mut(&addr)?;
         peer.seen = now;
@@ -565,6 +573,8 @@ fn upkeep(peer: &mut Peer, now: Instant, out: &mut Vec<Action>) {
 mod tests {
     use super::*;
 
+    const SHORT: &[u8] = &[0x40];
+
     fn addr(s: &str) -> SocketAddr {
         s.parse().unwrap()
     }
@@ -650,8 +660,11 @@ mod tests {
 
         paths.on_ack(key, v4, nonce, now);
         assert_eq!(paths.direct(&key), Some(v4));
-        assert_eq!(paths.quic_from(v4, now), Some(virtual_addr(&key)));
-        assert_eq!(paths.quic_from(addr("203.0.113.9:1000"), now), None);
+        assert_eq!(paths.quic_from(v4, SHORT, now), Some(virtual_addr(&key)));
+        for initial in [0xC3, 0x83] {
+            assert_eq!(paths.quic_from(v4, &[initial], now), None, "{initial:#x}");
+        }
+        assert_eq!(paths.quic_from(addr("203.0.113.9:1000"), SHORT, now), None);
 
         let v6 = addr("[2001:db8::1]:1000");
         paths.on_ack(key, v6, nonce, now);
@@ -761,7 +774,10 @@ mod tests {
         out.clear();
         let reflexive = addr("198.51.100.7:4000");
         paths.on_probe(key, reflexive, now + TICK, &mut out);
-        assert_eq!(paths.quic_from(reflexive, now), Some(virtual_addr(&key)));
+        assert_eq!(
+            paths.quic_from(reflexive, SHORT, now),
+            Some(virtual_addr(&key))
+        );
         out.clear();
         paths.tick(now + TICK * 2, &mut out);
         assert_eq!(probes(&out), [reflexive]);
@@ -820,7 +836,7 @@ mod tests {
         paths.on_ack(key, named, paths.peers[&virt].nonce, now);
         paths.tick(now + TICK, &mut out);
         assert!(out.is_empty(), "{out:?}");
-        assert_eq!(paths.quic_from(named, now), None);
+        assert_eq!(paths.quic_from(named, SHORT, now), None);
         assert_eq!(paths.direct(&key), None);
     }
 
@@ -852,7 +868,7 @@ mod tests {
         paths.revoke(&key);
         let virt = paths.touch(key, now);
         assert_eq!(paths.route(&virt, now), Some((key, None)));
-        assert_eq!(paths.quic_from(v4, now), None);
+        assert_eq!(paths.quic_from(v4, SHORT, now), None);
         let mut out = Vec::new();
         paths.tick(now + TICK, &mut out);
         paths.on_probe(key, v4, now + TICK, &mut out);
@@ -957,7 +973,7 @@ mod tests {
             let from = SocketAddr::new(addr("203.0.113.1:1").ip(), port);
             paths.on_probe(a, from, now, &mut out);
         }
-        assert_eq!(paths.quic_from(shared, now), Some(virtual_addr(&b)));
+        assert_eq!(paths.quic_from(shared, SHORT, now), Some(virtual_addr(&b)));
     }
 
     #[test]
@@ -1006,11 +1022,11 @@ mod tests {
         paths.on_candidates(key, PublicKey(random()), false, vec![], now, &mut out);
         let from = addr("198.51.100.8:4000");
         paths.on_probe(key, from, now, &mut out);
-        assert_eq!(paths.quic_from(from, now), Some(virtual_addr(&key)));
+        assert_eq!(paths.quic_from(from, SHORT, now), Some(virtual_addr(&key)));
 
         paths.tick(now + PEER_IDLE, &mut out);
         assert!(!paths.peers.contains_key(&virtual_addr(&key)));
-        assert_eq!(paths.quic_from(from, now + PEER_IDLE), None);
+        assert_eq!(paths.quic_from(from, SHORT, now + PEER_IDLE), None);
         assert!(
             paths.allowed.contains(&key),
             "forgetting routing keeps the allow"
