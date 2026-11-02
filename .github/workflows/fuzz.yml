@@ -56,7 +56,8 @@ jobs:
       # install-action serves a musl cargo-fuzz, which builds for musl by default,
       # and the toolchain has only the gnu std.
       - name: Resolve host triple
-        run: echo "FUZZ_TRIPLE=$(rustc -vV | sed -n 's/^host: //p')" >> "$GITHUB_ENV"
+        run: |
+          echo "FUZZ_TRIPLE=$(rustc -vV | sed -n 's/^host: //p')" >> "$GITHUB_ENV"
       # restore and save, not actions/cache: its save runs only on success, and a
       # crashing run has the corpus that matters.
       - name: Restore corpus
