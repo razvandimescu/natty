@@ -187,7 +187,7 @@ compatible with DERP. [docs/design.md](docs/design.md) specifies the wire format
 - There is no port prediction for hard NATs.
 - Local candidates come only from the interface of the default route.
 - Openers are IPv4 only.
-- There is no fuzzing and no NAT simulation in CI.
+- There is no NAT simulation in CI.
 - Memory use and binary size are not measured.
 - There is no declared minimum Rust version.
 - There has been no security review. To report a vulnerability, see [SECURITY.md](SECURITY.md).

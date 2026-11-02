@@ -134,6 +134,24 @@ impl Message {
     }
 }
 
+/// Fuzz entry. A peer signs with a key of its own choice, so the body parser
+/// sees any bytes behind a valid signature.
+#[cfg(fuzzing)]
+pub fn fuzz_signal(data: &[u8]) {
+    let _ = Message::open(data);
+    let Some((&ty, body)) = data.split_first() else {
+        return;
+    };
+    let secret = SecretKey::from_seed([7; 32]);
+    let mut packet = [&MAGIC[..], &[ty], &secret.public().0, body].concat();
+    let sig = secret.sign(&[CONTEXT, &packet].concat());
+    packet.extend_from_slice(&sig);
+    if let Some((key, message)) = Message::open(&packet) {
+        assert_eq!(key, secret.public());
+        assert_eq!(Message::open(&message.seal(&secret)), Some((key, message)));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

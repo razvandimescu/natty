@@ -48,7 +48,7 @@ relay carrying only the handshake.
 ## Phase 5: hardening and release
 
 - [ ] NAT simulation in Docker (iptables masquerade variants) in CI.
-- [ ] Fuzz the frame parser.
+- [x] Fuzz the frame, STUN, signal and key parsers (`fuzz/`).
 - [ ] armv6 cross-build (`messense/rust-musl-cross:arm-musleabihf`) and RSS
       measurement on a Pi Zero.
 - [ ] Binary size budget: library adds under 1 MiB to a stripped LTO binary.

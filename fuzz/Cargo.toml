@@ -1,0 +1,51 @@
+[package]
+name = "natty-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+natty = { path = ".." }
+
+[[bin]]
+name = "frame"
+path = "fuzz_targets/frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stun_request"
+path = "fuzz_targets/stun_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stun_response"
+path = "fuzz_targets/stun_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "signal"
+path = "fuzz_targets/signal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "key"
+path = "fuzz_targets/key.rs"
+test = false
+doc = false
+bench = false
+
+# Keeps the fuzzers out of the natty workspace and its build.
+[workspace]
+members = ["."]
