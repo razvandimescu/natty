@@ -1,8 +1,10 @@
 # natty
 
-natty is a Rust library and a relay server. An application uses them to open an encrypted QUIC connection to a peer behind NAT. A connection is a `quinn::Connection` from quinn 0.11. The connection uses a direct UDP path when hole punching succeeds. If it does not succeed, the relay forwards the encrypted packets.
+natty connects two applications behind NAT. The address of a peer is `<key>@<relay>`: its public key and a relay that both peers use. The application gets an encrypted `quinn::Connection` from quinn 0.11.
 
-A peer address is `<key>@<relay>`: the public key of the peer and its relay. The application must already have this address, and both peers must use the same relay. natty has no default relay. Each application chooses its relay, and anyone can run one.
+natty has two parts: a library and a relay server. The relay helps the peers open a direct UDP path through their NATs (hole punching). If the punch does not succeed, the relay forwards the encrypted packets.
+
+The application must already have the address of the peer. natty has no default relay. Each application chooses its relay. Anyone can run a relay.
 
 [An animated walk-through](https://razvandimescu.github.io/natty/how-it-works.html) shows one connection, step by step.
 
@@ -11,6 +13,7 @@ natty is built for the friend-to-friend service sharing in
 
 Status:
 
+- No security review yet. The API can change in every 0.0.x release.
 - Built: the relay, QUIC through the relay, and hole punching.
 - Measured ([docs/results.md](docs/results.md)):
   - the relay path between two networks;
@@ -60,14 +63,14 @@ This test uses one machine and three terminals. You need a Rust toolchain and a 
    NATTY_CA=cert.pem cargo run --example pipe -- listen localhost:4443 < /dev/null
    ```
    The listener prints `listening as <key>@localhost:4443`. It serves one peer and then stops.
-4. In terminal 3, connect to the address that the listener printed, and send a line:
+4. In terminal 3, send a line to the listener. Replace `<key>` with the key that the listener printed:
    ```sh
-   echo hello | NATTY_CA=cert.pem cargo run --example pipe -- connect <key>@localhost:4443
+   echo hello | NATTY_CA=cert.pem cargo run --example pipe -- connect '<key>@localhost:4443'
    ```
 
 Result: terminal 2 prints `hello`. Terminal 3 prints the byte counts, the RTT and `path relay`. This short transfer ends before the punch completes.
 
-This test shows that the relay and the API work. It does not test NAT traversal. On one machine, a longer transfer moves to a direct path over loopback, which does not cross a NAT. To test NAT traversal, see [Run a relay](#run-a-relay).
+This test shows that the relay and the API work. It does not test NAT traversal. On one machine, a longer transfer moves to a direct path over loopback, which does not cross a NAT. To test NAT traversal, see [Test NAT traversal](#test-nat-traversal).
 
 If `listening as` does not appear, the listener cannot reach the relay. The example retries in silence. To test the relay, run `curl --cacert cert.pem https://localhost:4443/health`. The first line must be `ok`.
 
@@ -77,7 +80,7 @@ Add natty from crates.io:
 
 ```toml
 [dependencies]
-natty = "0.0.1"
+natty = "0.0.2"
 ```
 
 A sketch. Errors use `?` for brevity. [examples/pipe.rs](examples/pipe.rs) is a
@@ -132,27 +135,27 @@ natty re-exports quinn as `natty::quinn`. To keep the same address after a resta
 
 ## Run a relay
 
-A relay needs a DNS name, a TLS certificate for that name, TCP 443 and UDP 3478. The peers need only outbound access.
+A relay needs a DNS name, a TLS certificate for that name, TCP 443 and UDP 3478. The peers need only outbound access. To install the relay, run `cargo install natty-relay`. [relay/README.md](relay/README.md) describes the certificate setup, the health check and the flags.
 
-Build the relay with `cargo build --release -p natty-relay`, or use the [Dockerfile](Dockerfile) for a static image. Start it with `./target/release/natty-relay --cert fullchain.pem --key privkey.pem`. With a public CA certificate, the peers need no `NATTY_CA`. For a self-signed certificate, use the command in quickstart step 1 with the host name in place of `localhost`, and copy `cert.pem` to the peers. A plain `openssl req -x509` certificate has CA:TRUE and no subjectAltName, so rustls rejects it.
+## Test NAT traversal
 
-To test the relay from a peer, run `curl https://relay.example.net/health`. Add `--cacert cert.pem` for a self-signed certificate. The first line is `ok`.
+Use two peers on different networks and a relay that both peers can reach.
 
-To test NAT traversal, do quickstart steps 3 and 4 on two peers on different networks, with the relay host name in place of `localhost:4443`. The connector prints `path relay` or `path direct <address>`. `path relay` is a normal result. A small transfer can end before the punch completes, and some pairs of NATs never get a direct path.
+For tests, you can use `relay.numa.rs` in place of your own relay. The author of natty runs it for numa. It shares a traffic cap with numa users. It can stop or change at any time. Do not use it in a released application. Its operator sees the data that [What the relay sees](#what-the-relay-sees) lists.
 
-Flags:
+On one peer, start a listener:
 
-- `--cert` and `--key`: PEM files. The relay reads them only at start. Restart
-  the relay after you renew the certificate.
-- `--listen`: the TCP address for relay sessions. The default is `[::]:443`. A port above 1023 needs no root. Then the relay address includes the port, for example `relay.example.net:4443`.
-- `--stun`: the UDP address of the STUN responder. The default is `[::]:3478`.
-- `--cap`: the forwarded bytes per second for each session. The default is
-  1 MiB/s. A value of 0 removes the cap.
-- `--total-cap`: the forwarded bytes per second for all sessions together. The
-  default is 0, no ceiling. A public relay can use it to stay inside its
-  traffic budget.
-- `--per-ip`: the connection limit for each IPv4 address or IPv6 /64. The
-  default is 16.
+```sh
+cargo run --example pipe -- listen relay.numa.rs < /dev/null
+```
+
+On the other peer, send a line to the listener. Replace `<key>` with the key that the listener printed. The `sleep` keeps the stream open during the punch.
+
+```sh
+(echo hello; sleep 5) | cargo run --example pipe -- connect '<key>@relay.numa.rs'
+```
+
+Both peers print `path relay` or `path direct <address>`. `path relay` is a normal result. Some pairs of NATs never get a direct path. For your own relay, use its address. For a self-signed certificate, set `NATTY_CA` as in the quickstart.
 
 ## How it works
 
