@@ -148,6 +148,11 @@ first 15 bytes of the key, port 1. These addresses never reach a real socket.
   `src` field or the synthetic address.
 - This is the only place path selection happens: per key, the relay, a
   direct UDP path, or both (see Direct path).
+- A datagram that starts with a QUIC Initial goes only through the relay, in
+  both directions. The endpoint drops an Initial that arrives over UDP. So an
+  attacker that spoofs a proven address cannot start a handshake and get the
+  acceptor's key from its certificate. The rule covers both directions because
+  the first byte does not show which side sent an Initial.
 
 ## Direct path
 
@@ -165,7 +170,7 @@ QUIC uses. A received datagram is, by its first bytes:
 - a STUN binding response: first byte `0x01`, bytes 4 to 8 the magic cookie;
 - a punch message: the magic `2a 6e 74 79` (`*nty`);
 - otherwise QUIC, accepted only from an address proven for some key (below),
-  else dropped.
+  else dropped. An Initial is always dropped (see Virtual socket).
 
 QUIC bit greasing (RFC 9287) is disabled, so every QUIC packet carries the
 fixed bit `0x40`; STUN and punch messages start below `0x40`. Datagrams
@@ -253,9 +258,9 @@ During a punch, which lasts 3 s:
 - It ends early once the peer has an IPv6 direct path.
 
 A PROBE from source `S`, signed by `K`'s probe key, is answered with PROBE_ACK to `S`. `S`
-becomes proven for `K`, and for no other key: QUIC from `S` is accepted as
-`K`'s, and `S` is probed with `K`'s candidates, which is how a peer behind an
-endpoint-dependent NAT is reached. Proven addresses, the newest 8 per key, are
+becomes proven for `K`, and for no other key: QUIC from `S`, except an Initial,
+is accepted as `K`'s, and `S` is probed with `K`'s candidates, which is how a peer
+behind an endpoint-dependent NAT is reached. Proven addresses, the newest 8 per key, are
 kept apart from candidates, so new CANDIDATES from `K` do not drop them. If `S`
 was neither a candidate nor proven and `K` has no direct path, a punch starts
 as in case 3.

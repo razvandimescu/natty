@@ -43,6 +43,12 @@ fn classify(data: &[u8]) -> Kind {
     }
 }
 
+/// A QUIC Initial, with or without the fixed bit. Initials go only through the
+/// relay, so a spoofed address cannot start a handshake (docs/design.md).
+pub(crate) fn is_initial(packet: &[u8]) -> bool {
+    packet.first().is_some_and(|b| b & 0xB0 == 0x80)
+}
+
 /// quinn addresses paths by socket address, so each key gets a stable
 /// synthetic one in fd00::/8. These addresses never reach a real socket.
 pub(crate) fn virtual_addr(key: &PublicKey) -> SocketAddr {
@@ -78,7 +84,7 @@ impl AsyncUdpSocket for VirtualSocket {
             .ok_or_else(|| {
                 io::Error::new(io::ErrorKind::AddrNotAvailable, "unknown peer address")
             })?;
-        if let Some((addr, trusted)) = direct {
+        if let Some((addr, trusted)) = direct.filter(|_| !is_initial(transmit.contents)) {
             self.udp.send_to(transmit.contents, addr);
             if trusted {
                 return Ok(());
@@ -147,7 +153,7 @@ impl AsyncUdpSocket for VirtualSocket {
                     Kind::Stun => Packet::Stun(data.to_vec()),
                     Kind::Punch => Packet::UdpPunch(from, data.to_vec()),
                     Kind::Quic => {
-                        if let Some(addr) = self.paths.lock().unwrap().quic_from(from, now) {
+                        if let Some(addr) = self.paths.lock().unwrap().quic_from(from, data, now) {
                             meta[count] = recv_meta(addr, data.len());
                             count += 1;
                         }
