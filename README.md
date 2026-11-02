@@ -1,8 +1,10 @@
 # natty
 
-natty is a Rust library and a relay server. An application uses them to open an encrypted QUIC connection to a peer behind NAT. A connection is a `quinn::Connection` from quinn 0.11. The connection uses a direct UDP path when hole punching succeeds. If it does not succeed, the relay forwards the encrypted packets.
+natty connects two applications behind NAT. The address of a peer is `<key>@<relay>`: its public key and a relay that both peers use. The application gets an encrypted `quinn::Connection` from quinn 0.11.
 
-A peer address is `<key>@<relay>`: the public key of the peer and its relay. The application must already have this address, and both peers must use the same relay. natty has no default relay. Each application chooses its relay, and anyone can run one.
+natty has two parts: a library and a relay server. The relay helps the peers open a direct UDP path through their NATs (hole punching). If the punch does not succeed, the relay forwards the encrypted packets.
+
+The application must already have the address of the peer. natty has no default relay. Each application chooses its relay. Anyone can run a relay.
 
 [An animated walk-through](https://razvandimescu.github.io/natty/how-it-works.html) shows one connection, step by step.
 
@@ -11,6 +13,7 @@ natty is built for the friend-to-friend service sharing in
 
 Status:
 
+- No security review yet. The API can change in every 0.0.x release.
 - Built: the relay, QUIC through the relay, and hole punching.
 - Measured ([docs/results.md](docs/results.md)):
   - the relay path between two networks;
@@ -60,9 +63,9 @@ This test uses one machine and three terminals. You need a Rust toolchain and a 
    NATTY_CA=cert.pem cargo run --example pipe -- listen localhost:4443 < /dev/null
    ```
    The listener prints `listening as <key>@localhost:4443`. It serves one peer and then stops.
-4. In terminal 3, connect to the address that the listener printed, and send a line:
+4. In terminal 3, send a line to the listener. Replace `<key>` with the key that the listener printed:
    ```sh
-   echo hello | NATTY_CA=cert.pem cargo run --example pipe -- connect <key>@localhost:4443
+   echo hello | NATTY_CA=cert.pem cargo run --example pipe -- connect '<key>@localhost:4443'
    ```
 
 Result: terminal 2 prints `hello`. Terminal 3 prints the byte counts, the RTT and `path relay`. This short transfer ends before the punch completes.
