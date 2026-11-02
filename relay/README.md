@@ -75,7 +75,7 @@ The relay sees which keys are online, their addresses, and which pairs of keys e
 
 ## Security
 
-There is no security review of natty-relay. The frame parser has no fuzz tests. To report a vulnerability, see [SECURITY.md](https://github.com/razvandimescu/natty/blob/main/SECURITY.md).
+CI fuzzes the frame parser and the STUN responder. To report a vulnerability, see [SECURITY.md](https://github.com/razvandimescu/natty/blob/main/SECURITY.md).
 
 ## License
 
