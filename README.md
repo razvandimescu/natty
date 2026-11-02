@@ -67,7 +67,7 @@ This test uses one machine and three terminals. You need a Rust toolchain and a 
 
 Result: terminal 2 prints `hello`. Terminal 3 prints the byte counts, the RTT and `path relay`. This short transfer ends before the punch completes.
 
-This test shows that the relay and the API work. It does not test NAT traversal. On one machine, a longer transfer moves to a direct path over loopback, which does not cross a NAT. To test NAT traversal, see [Run a relay](#run-a-relay).
+This test shows that the relay and the API work. It does not test NAT traversal. On one machine, a longer transfer moves to a direct path over loopback, which does not cross a NAT. To test NAT traversal, see [Test NAT traversal](#test-nat-traversal).
 
 If `listening as` does not appear, the listener cannot reach the relay. The example retries in silence. To test the relay, run `curl --cacert cert.pem https://localhost:4443/health`. The first line must be `ok`.
 
@@ -134,7 +134,25 @@ natty re-exports quinn as `natty::quinn`. To keep the same address after a resta
 
 A relay needs a DNS name, a TLS certificate for that name, TCP 443 and UDP 3478. The peers need only outbound access. To install the relay, run `cargo install natty-relay`. [relay/README.md](relay/README.md) describes the certificate setup, the health check and the flags.
 
-To test NAT traversal, use two peers on different networks. Do quickstart step 3 on one peer. Do step 4 on the other peer. Use the relay host name in place of `localhost:4443`. If the relay has a certificate from a public CA, do not set `NATTY_CA`. The dialer prints `path relay` or `path direct <address>`. `path relay` is a normal result. A small transfer can end before the punch completes. Some pairs of NATs never get a direct path.
+## Test NAT traversal
+
+Use two peers on different networks and a relay that both peers can reach.
+
+For tests, you can use `relay.numa.rs` in place of your own relay. The author of natty runs it for numa. It shares a traffic cap with numa users. It can stop or change at any time. Do not use it in a released application. Its operator sees the data that [What the relay sees](#what-the-relay-sees) lists.
+
+On one peer, start a listener:
+
+```sh
+cargo run --example pipe -- listen relay.numa.rs < /dev/null
+```
+
+On the other peer, send a line to the listener. Replace `<key>` with the key that the listener printed. The `sleep` keeps the stream open during the punch.
+
+```sh
+(echo hello; sleep 5) | cargo run --example pipe -- connect '<key>@relay.numa.rs'
+```
+
+Both peers print `path relay` or `path direct <address>`. `path relay` is a normal result. Some pairs of NATs never get a direct path. For your own relay, use its address. For a self-signed certificate, set `NATTY_CA` as in the quickstart.
 
 ## How it works
 
