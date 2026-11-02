@@ -132,27 +132,9 @@ natty re-exports quinn as `natty::quinn`. To keep the same address after a resta
 
 ## Run a relay
 
-A relay needs a DNS name, a TLS certificate for that name, TCP 443 and UDP 3478. The peers need only outbound access.
+A relay needs a DNS name, a TLS certificate for that name, TCP 443 and UDP 3478. The peers need only outbound access. To install the relay, run `cargo install natty-relay`. [relay/README.md](relay/README.md) describes the certificate setup, the health check and the flags.
 
-Build the relay with `cargo build --release -p natty-relay`, or use the [Dockerfile](Dockerfile) for a static image. Start it with `./target/release/natty-relay --cert fullchain.pem --key privkey.pem`. With a public CA certificate, the peers need no `NATTY_CA`. For a self-signed certificate, use the command in quickstart step 1 with the host name in place of `localhost`, and copy `cert.pem` to the peers. A plain `openssl req -x509` certificate has CA:TRUE and no subjectAltName, so rustls rejects it.
-
-To test the relay from a peer, run `curl https://relay.example.net/health`. Add `--cacert cert.pem` for a self-signed certificate. The first line is `ok`.
-
-To test NAT traversal, do quickstart steps 3 and 4 on two peers on different networks, with the relay host name in place of `localhost:4443`. The connector prints `path relay` or `path direct <address>`. `path relay` is a normal result. A small transfer can end before the punch completes, and some pairs of NATs never get a direct path.
-
-Flags:
-
-- `--cert` and `--key`: PEM files. The relay reads them only at start. Restart
-  the relay after you renew the certificate.
-- `--listen`: the TCP address for relay sessions. The default is `[::]:443`. A port above 1023 needs no root. Then the relay address includes the port, for example `relay.example.net:4443`.
-- `--stun`: the UDP address of the STUN responder. The default is `[::]:3478`.
-- `--cap`: the forwarded bytes per second for each session. The default is
-  1 MiB/s. A value of 0 removes the cap.
-- `--total-cap`: the forwarded bytes per second for all sessions together. The
-  default is 0, no ceiling. A public relay can use it to stay inside its
-  traffic budget.
-- `--per-ip`: the connection limit for each IPv4 address or IPv6 /64. The
-  default is 16.
+To test NAT traversal, use two peers on different networks. Do quickstart step 3 on one peer. Do step 4 on the other peer. Use the relay host name in place of `localhost:4443`. If the relay has a certificate from a public CA, do not set `NATTY_CA`. The dialer prints `path relay` or `path direct <address>`. `path relay` is a normal result. A small transfer can end before the punch completes. Some pairs of NATs never get a direct path.
 
 ## How it works
 
