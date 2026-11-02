@@ -80,7 +80,7 @@ Add natty from crates.io:
 
 ```toml
 [dependencies]
-natty = "0.0.1"
+natty = "0.0.2"
 ```
 
 A sketch. Errors use `?` for brevity. [examples/pipe.rs](examples/pipe.rs) is a

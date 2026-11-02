@@ -7,7 +7,7 @@ cognitive_complexity = "warn"
 
 [package]
 name = "natty"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "NAT traversal library: QUIC to a peer's public key, direct by hole punching or relayed"
