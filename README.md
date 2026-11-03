@@ -19,7 +19,7 @@ Status:
     (home and office routers, 2026-10-24).
 - Not yet shown: direct paths over IPv6, through double NAT or carrier-grade
   NAT, or between peers a few hops apart.
-- Not started: port mapping and hardening ([ROADMAP.md](ROADMAP.md)).
+- Not started: port mapping ([ROADMAP.md](ROADMAP.md)).
 - Runs on macOS, Linux and Windows. CI tests only Linux.
 
 ## When to use natty
