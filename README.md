@@ -135,7 +135,7 @@ natty re-exports quinn as `natty::quinn`. To keep the same address after a resta
 
 ## Run a relay
 
-A relay needs a DNS name, a TLS certificate for that name, TCP 443 and UDP 3478. The peers need only outbound access. To install the relay, run `cargo install natty-relay`. [relay/README.md](relay/README.md) describes the certificate setup, the health check and the flags.
+A relay needs a TLS certificate for its host name or IP address, a TCP port for sessions and a UDP port for STUN. The defaults are TCP 443 and UDP 3478. The peers need only outbound access. To install the relay, run `cargo install natty-relay`. [relay/README.md](relay/README.md) describes the certificate setup, the health check and the flags.
 
 ## Test NAT traversal
 
@@ -149,7 +149,13 @@ On one peer, start a listener:
 cargo run --example pipe -- listen relay.numa.rs < /dev/null
 ```
 
-On the other peer, send a line to the listener. Replace `<key>` with the key that the listener printed. The `sleep` keeps the stream open during the punch.
+On the other peer, build the example:
+
+```sh
+cargo build --example pipe
+```
+
+Then send a line to the listener. Replace `<key>` with the key that the listener printed. The `sleep` keeps the stream open for 5 s during the punch. Without the build step, the compile in `cargo run` can use all of the 5 s. The peers then print `path relay`, also when a direct path is possible.
 
 ```sh
 (echo hello; sleep 5) | cargo run --example pipe -- connect '<key>@relay.numa.rs'

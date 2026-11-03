@@ -16,7 +16,7 @@ To build a static Linux image, use the [Dockerfile](https://github.com/razvandim
 
 ## Run
 
-A relay needs a DNS name, a TLS certificate for that name, TCP 443 and UDP 3478. The peers need only outbound access. The relay accepts a session from any key. To limit its load, use `--cap`, `--total-cap` and `--per-ip`.
+A relay needs a TLS certificate for its host name or IP address, a TCP port for sessions and a UDP port for STUN. The defaults are TCP 443 and UDP 3478. The peers need only outbound access. The relay accepts a session from any key. To limit its load, use `--cap`, `--total-cap` and `--per-ip`.
 
 ### Certificate from a public CA
 
@@ -30,7 +30,7 @@ Peers that trust the public CA roots accept this certificate. The natty examples
 
 ### Self-signed certificate
 
-Make the certificate. Use your host name in place of `relay.example.net`:
+Make the certificate. Use your host name or IP address in place of `relay.example.net`:
 
 ```sh
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 365 \
@@ -38,7 +38,7 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 365 \
   -addext basicConstraints=critical,CA:FALSE -keyout key.pem -out cert.pem
 ```
 
-Keep the `-addext` options. Without them, the certificate has CA:TRUE and no subjectAltName. rustls rejects such a certificate.
+For an IP address, also change `DNS:` to `IP:`. Keep the `-addext` options. Without them, the certificate has CA:TRUE and no subjectAltName. rustls rejects such a certificate.
 
 Start the relay:
 
