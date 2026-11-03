@@ -1,4 +1,0 @@
-# cargo-fuzz needs nightly. rustup reads this file only when the working
-# directory is fuzz/, so run `make fuzz` or `cargo +nightly-2025-12-01 fuzz run`.
-[toolchain]
-channel = "nightly-2025-12-01"

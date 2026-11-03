@@ -1,19 +1,14 @@
 name: fuzz
 
-# libFuzzer over the parsers of untrusted input. A PR that changes one gets a
-# short run, the weekly run goes deeper. Linux only: cargo-fuzz hangs before
-# main under ASan on recent macOS.
+# libFuzzer over the parsers of untrusted input. A PR gets a short run. The
+# weekly run goes deeper.
 on:
   pull_request:
     branches: [main]
     paths:
-      - 'src/wire.rs'
-      - 'src/stun.rs'
-      - 'src/key.rs'
-      - 'src/endpoint/signal.rs'
-      - 'src/endpoint/mod.rs'
-      - 'src/lib.rs'
+      - 'src/**'
       - 'Cargo.toml'
+      - 'Makefile'
       - 'fuzz/**'
       - '.github/workflows/fuzz.yml'
   schedule:
@@ -34,9 +29,9 @@ concurrency:
 jobs:
   fuzz:
     runs-on: ubuntu-latest
-    # -max_total_time is checked between inputs, so one hanging input needs this limit.
     timeout-minutes: 30
     env:
+      FUZZ_TARGET: ${{ matrix.target }}
       FUZZ_SECONDS: ${{ inputs.seconds || (github.event_name == 'schedule' && '300' || '60') }}
     strategy:
       fail-fast: false
@@ -46,18 +41,13 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-12-01
+          toolchain: nightly-2025-12-01 # FUZZ_TOOLCHAIN in the Makefile
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: fuzz
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-fuzz
-      # install-action serves a musl cargo-fuzz, which builds for musl by default,
-      # and the toolchain has only the gnu std.
-      - name: Resolve host triple
-        run: |
-          echo "FUZZ_TRIPLE=$(rustc -vV | sed -n 's/^host: //p')" >> "$GITHUB_ENV"
       # restore and save, not actions/cache: its save runs only on success, and a
       # crashing run has the corpus that matters.
       - name: Restore corpus
@@ -66,17 +56,12 @@ jobs:
           path: fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
           restore-keys: fuzz-corpus-${{ matrix.target }}-
-      # fuzz/seeds is committed and read-only; new inputs go to fuzz/corpus.
       - name: Fuzz ${{ matrix.target }}
-        run: |
-          mkdir -p fuzz/corpus/${{ matrix.target }}
-          cargo fuzz run --target "$FUZZ_TRIPLE" ${{ matrix.target }} \
-            fuzz/corpus/${{ matrix.target }} fuzz/seeds/${{ matrix.target }} \
-            -- -max_total_time=${FUZZ_SECONDS} -max_len=4096 -timeout=25
+        run: make fuzz
       # Only weekly: cmin re-runs the whole corpus, and without it the cache grows.
       - name: Minimize corpus
         if: github.event_name == 'schedule'
-        run: cargo fuzz cmin --target "$FUZZ_TRIPLE" ${{ matrix.target }} -- -timeout=25
+        run: make fuzz-cmin
       - name: Save corpus
         if: always()
         uses: actions/cache/save@v6

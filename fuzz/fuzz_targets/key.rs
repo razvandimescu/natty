@@ -5,10 +5,7 @@
 use libfuzzer_sys::fuzz_target;
 use natty::PublicKey;
 
-fuzz_target!(|data: &[u8]| {
-    let Ok(text) = std::str::from_utf8(data) else {
-        return;
-    };
+fuzz_target!(|text: &str| {
     if let Ok(key) = text.parse::<PublicKey>() {
         assert_eq!(key.to_string(), text);
     }

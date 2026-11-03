@@ -11,18 +11,17 @@ use natty::wire::read_frame;
 
 fuzz_target!(|data: &[u8]| {
     let mut stream = data;
-    while let Some(Ok(frame)) = now(read_frame(&mut stream)) {
+    while let Ok(frame) = now(read_frame(&mut stream)) {
         let mut buf = Vec::new();
         frame.encode(&mut buf);
-        let again = now(read_frame(&mut &buf[..])).and_then(Result::ok);
-        assert_eq!(again, Some(frame));
+        assert_eq!(now(read_frame(&mut &buf[..])).ok(), Some(frame));
     }
 });
 
 /// Reads from a byte slice never wait, so one poll completes the future.
-fn now<F: Future>(f: F) -> Option<F::Output> {
+fn now<F: Future>(f: F) -> F::Output {
     match pin!(f).poll(&mut Context::from_waker(Waker::noop())) {
-        Poll::Ready(out) => Some(out),
-        Poll::Pending => None,
+        Poll::Ready(out) => out,
+        Poll::Pending => unreachable!(),
     }
 }
