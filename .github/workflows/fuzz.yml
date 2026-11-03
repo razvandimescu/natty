@@ -1,7 +1,5 @@
 name: fuzz
 
-# libFuzzer over the parsers of untrusted input. A PR gets a short run. The
-# weekly run goes deeper.
 on:
   pull_request:
     branches: [main]
@@ -48,8 +46,8 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-fuzz
-      # restore and save, not actions/cache: its save runs only on success, and a
-      # crashing run has the corpus that matters.
+      # restore and save, not actions/cache: its save runs only when the job
+      # passes, and a run that finds a crash also grows the corpus.
       - name: Restore corpus
         uses: actions/cache/restore@v6
         with:

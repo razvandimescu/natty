@@ -3,9 +3,9 @@
 FUZZ_TOOLCHAIN := nightly-2025-12-01
 FUZZ_TARGET ?= frame
 FUZZ_SECONDS ?= 60
-# --target: cargo-fuzz from cargo-binstall or install-action is a musl build,
-# and it builds for musl by default. -s none: ASan hangs before main on recent
-# macOS.
+# --target: cargo-fuzz defaults to the triple it was built for, which is musl
+# when it comes from cargo-binstall or install-action. -s none: ASan hangs
+# before main on recent macOS.
 FUZZ_FLAGS = --target $(shell rustc +$(FUZZ_TOOLCHAIN) --print host-tuple) \
 	$(if $(filter Darwin,$(shell uname -s)),-s none)
 
@@ -19,6 +19,7 @@ lint: audit
 	cargo clippy --all-targets -- -D warnings
 audit:
 	cargo audit
+# New inputs go to the first directory, so fuzz/seeds stays as committed.
 fuzz:
 	mkdir -p fuzz/corpus/$(FUZZ_TARGET)
 	cargo +$(FUZZ_TOOLCHAIN) fuzz run $(FUZZ_FLAGS) $(FUZZ_TARGET) \

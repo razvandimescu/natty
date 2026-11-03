@@ -1,6 +1,6 @@
 #![no_main]
 //! Relay frames as one byte stream: what a relay reads from any client, and a
-//! client from its relay. Every frame that decodes must survive a re-encode.
+//! client from its relay.
 
 use std::future::Future;
 use std::pin::pin;

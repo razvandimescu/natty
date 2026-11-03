@@ -136,8 +136,8 @@ impl Message {
     }
 }
 
-/// Fuzz entry. A peer signs with a key of its own choice, so `decode` sees any
-/// bytes behind a valid signature.
+/// A peer signs with a key of its own choice, so `decode` sees any bytes behind
+/// a valid signature.
 #[cfg(fuzzing)]
 pub fn fuzz_signal(data: &[u8]) {
     let _ = Message::open(data);
