@@ -47,12 +47,19 @@ relay carrying only the handshake.
 
 ## Phase 5: hardening and release
 
+- [x] Fuzz the frame, STUN, signal and key parsers (`fuzz/`).
+- [x] No endpoint key goes out in clear: probes carry probe keys
+      ([#14](https://github.com/razvandimescu/natty/pull/14)), and QUIC
+      handshakes start only through the relay
+      ([#17](https://github.com/razvandimescu/natty/pull/17)).
+- [x] `natty-relay` deployable as a single binary: `cargo install natty-relay`
+      or the static Docker image.
 - [ ] NAT simulation in Docker (iptables masquerade variants) in CI.
-- [ ] Fuzz the frame parser.
-- [ ] armv6 cross-build (`messense/rust-musl-cross:arm-musleabihf`) and RSS
-      measurement on a Pi Zero.
+- [ ] RSS measurement on a Pi Zero. The armv6 cross-build
+      (`messense/rust-musl-cross:arm-musleabihf`) already runs there.
 - [ ] Binary size budget: library adds under 1 MiB to a stripped LTO binary.
-- [ ] 0.1.0 on crates.io, `natty-relay` deployable as a single binary.
+- [ ] A pending connect fails at once on PEER_GONE, not after 30 s.
+- [ ] 0.1.0 on crates.io. Until then, each 0.0.x release can change the API.
 
 Gate: numa can build its friend-to-friend feature against 0.1.0 behind a
 feature flag without touching natty internals.

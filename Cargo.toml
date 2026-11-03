@@ -5,6 +5,9 @@ default-members = [".", "relay"]
 [workspace.lints.clippy]
 cognitive_complexity = "warn"
 
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
+
 [package]
 name = "natty"
 version = "0.0.2"

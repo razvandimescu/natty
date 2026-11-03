@@ -16,6 +16,8 @@ use tokio::task::JoinHandle;
 use tokio_rustls::rustls::ClientConfig;
 
 pub use peer_tls::peer_key;
+#[cfg(fuzzing)]
+pub use signal::fuzz_signal;
 
 use crate::client::RelayAddr;
 use crate::wire::Welcome;

@@ -1,0 +1,75 @@
+name: fuzz
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Makefile'
+      - 'fuzz/**'
+      - '.github/workflows/fuzz.yml'
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: 'Seconds to fuzz each target'
+        default: '120'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FUZZ_TARGET: ${{ matrix.target }}
+      FUZZ_SECONDS: ${{ inputs.seconds || (github.event_name == 'schedule' && '300' || '60') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [frame, stun_request, stun_response, signal, key]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-12-01 # FUZZ_TOOLCHAIN in the Makefile
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      # restore and save, not actions/cache: its save runs only when the job
+      # passes, and a run that finds a crash also grows the corpus.
+      - name: Restore corpus
+        uses: actions/cache/restore@v6
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+      - name: Fuzz ${{ matrix.target }}
+        run: make fuzz
+      # Only weekly: cmin re-runs the whole corpus, and without it the cache grows.
+      - name: Minimize corpus
+        if: github.event_name == 'schedule'
+        run: make fuzz-cmin
+      - name: Save corpus
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+      - name: Upload crash
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore

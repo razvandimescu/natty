@@ -109,8 +109,11 @@ impl Message {
         if !key.verify(&[CONTEXT, signed].concat(), sig) {
             return None;
         }
-        let body = &signed[HEADER..];
-        let message = match signed[4] {
+        Some((key, Self::decode(signed[4], &signed[HEADER..])?))
+    }
+
+    fn decode(ty: u8, body: &[u8]) -> Option<Message> {
+        Some(match ty {
             CANDIDATES => {
                 let (&reply, rest) = body.split_first()?;
                 let (probe_key, mut rest) = rest.split_first_chunk()?;
@@ -129,8 +132,22 @@ impl Message {
             PROBE => Message::Probe(*body.first_chunk()?),
             PROBE_ACK => Message::ProbeAck(*body.first_chunk()?),
             _ => return None,
-        };
-        Some((key, message))
+        })
+    }
+}
+
+/// A peer signs with a key of its own choice, so `decode` sees any bytes behind
+/// a valid signature.
+#[cfg(fuzzing)]
+pub fn fuzz_signal(data: &[u8]) {
+    let _ = Message::open(data);
+    let Some((&ty, body)) = data.split_first() else {
+        return;
+    };
+    if let Some(message) = Message::decode(ty, body) {
+        let secret = SecretKey::from_seed([7; 32]);
+        let packet = message.seal(&secret);
+        assert_eq!(Message::open(&packet), Some((secret.public(), message)));
     }
 }
 

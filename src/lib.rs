@@ -8,6 +8,8 @@ pub mod stun;
 pub mod wire;
 
 pub use client::connect;
+#[cfg(all(fuzzing, feature = "quic"))]
+pub use endpoint::fuzz_signal;
 #[cfg(feature = "quic")]
 pub use endpoint::{peer_key, Endpoint};
 pub use key::{InvalidKey, PublicKey, SecretKey};
