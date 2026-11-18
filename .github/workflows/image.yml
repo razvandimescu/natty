@@ -1,0 +1,53 @@
+name: image
+
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    paths-ignore: ['**.md', 'docs/**']
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+  # The tag v1.2.3 gives natty:v1.2.3 and natty-relay:v1.2.3. A pull request builds the images and does not push them.
+  TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'pr' }}
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build
+        run: |
+          for image in natty natty-relay; do
+            docker build --target "$image" \
+              --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+              --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+              --tag "$REGISTRY/$image:$TAG" .
+          done
+
+      # natty as a hardened pod runs it: not root, a read-only root file system, no capabilities.
+      # The relay has no certificate here, so it can only print its usage.
+      - name: Run
+        run: |
+          docker run --rm --read-only --cap-drop ALL --tmpfs /keys:uid=65532,gid=65532,mode=0700 \
+            --env NATTY_KEY=/keys/key "$REGISTRY/natty:$TAG" key | grep -Ex '[a-z0-9]{52}'
+          (docker run --rm --read-only --cap-drop ALL "$REGISTRY/natty-relay:$TAG" 2>&1 || true) | grep 'usage: natty-relay'
+
+      - name: Push
+        if: github.ref_type == 'tag'
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push "$REGISTRY/natty:$TAG"
+          docker push "$REGISTRY/natty-relay:$TAG"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
