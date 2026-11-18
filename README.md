@@ -92,7 +92,7 @@ Both peers bind an endpoint on the same relay:
 use natty::{Endpoint, PublicKey, SecretKey};
 
 // relay_tls is an Arc<natty::quinn::rustls::ClientConfig> that trusts the
-// relay certificate. examples/common/mod.rs makes one with webpki-roots.
+// relay certificate. src/bin/natty/env.rs makes one with webpki-roots.
 // Both peers must offer the same ALPN. The pipe example uses natty-pipe/1.
 let endpoint = Endpoint::bind(SecretKey::generate(), "relay.example.net", relay_tls, &[b"my-app/1"])?;
 // This waits with no limit while the relay is unreachable, for example

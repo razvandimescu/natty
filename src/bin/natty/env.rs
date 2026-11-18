@@ -1,5 +1,6 @@
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
+use std::path::Path;
 use std::sync::Arc;
 
 use natty::SecretKey;
@@ -34,19 +35,26 @@ pub fn secret_key() -> io::Result<SecretKey> {
     let Ok(path) = std::env::var("NATTY_KEY") else {
         return Ok(SecretKey::generate());
     };
-    match fs::read(&path) {
+    key_file(&path).map_err(|e| io::Error::new(e.kind(), format!("{path}: {e}")))
+}
+
+fn key_file(path: &str) -> io::Result<SecretKey> {
+    match fs::read(path) {
         Ok(bytes) => {
-            let seed = <[u8; 32]>::try_from(bytes)
-                .map_err(|_| io::Error::other(format!("{path}: not a 32-byte key")))?;
+            let seed =
+                <[u8; 32]>::try_from(bytes).map_err(|_| io::Error::other("not a 32-byte key"))?;
             Ok(SecretKey::from_seed(seed))
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
             let key = SecretKey::generate();
+            if let Some(dir) = Path::new(path).parent() {
+                fs::create_dir_all(dir)?;
+            }
             let mut options = OpenOptions::new();
             options.write(true).create_new(true);
             #[cfg(unix)]
             std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-            options.open(&path)?.write_all(key.seed())?;
+            options.open(path)?.write_all(key.seed())?;
             Ok(key)
         }
         Err(e) => Err(e),

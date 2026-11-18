@@ -9,14 +9,15 @@ FUZZ_SECONDS ?= 60
 FUZZ_FLAGS = --target $(shell rustc +$(FUZZ_TOOLCHAIN) --print host-tuple) \
 	$(if $(filter Darwin,$(shell uname -s)),-s none)
 
+# --all-features: the tunnel module and the natty binary are behind features.
 build:
-	cargo build
+	cargo build --all-features
 test:
-	cargo test
+	cargo test --all-features
 lint: audit
 	cargo fmt --check
 	cargo fmt --check --manifest-path fuzz/Cargo.toml
-	cargo clippy --all-targets -- -D warnings
+	cargo clippy --all-targets --all-features -- -D warnings
 audit:
 	cargo audit
 # New inputs go to the first directory, so fuzz/seeds stays as committed.

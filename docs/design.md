@@ -287,6 +287,66 @@ current one IPv4.
   An idle connection thus outlives the 30 s QUIC idle timeout, and its key is
   not forgotten.
 
+## Tunnel
+
+An optional protocol on top of an endpoint (feature `tunnel`): TCP services by
+name. The host serves, the dialer connects. The ALPN is `natty-tunnel/1`, and
+the protocol version lives in it.
+
+### Streams
+
+The dialer opens one bidirectional stream for each TCP connection.
+
+1. The dialer sends a request line: a service name or `?`, then `\n`.
+2. The host answers with one status byte.
+3. After status 0, both sides copy raw bytes. The end of one direction is
+   passed on as a TCP half-close; the stream ends when both directions have
+   ended.
+
+- A service name is 1 to 63 letters, digits and hyphens. The host trims white
+  space from the line and compares names in lower case.
+- The line is at most 64 bytes before the newline and must arrive within
+  10 s. A line that is longer, empty or not UTF-8 gets no status: the host
+  ends the stream.
+- `?` asks for a listing. The host answers status 0, then the names the dialer
+  may open, one per line, and finishes the stream. The dialer reads at most
+  64 KiB and keeps at most 256 names that are valid and distinct.
+
+| status | name | meaning |
+|---|---|---|
+| 0 | OK | the stream now carries the service |
+| 1 | DENIED | the host has not granted the service to this key |
+| 2 | UNKNOWN | the key has the grant, and the host has no such service |
+| 3 | UNAVAILABLE | the upstream did not accept a connection within 10 s |
+
+Every other value is reserved. A dialer reads any value except 0 as a refusal,
+so statuses can be added without a version bump.
+
+### Authorization
+
+- The dialer is the key from the QUIC handshake. The dialer never sends an
+  address: the host maps a name to an upstream address in its own
+  configuration.
+- A grant gives one key one service name. The host checks the grant before it
+  looks the service up, so a key without the grant gets DENIED for every name
+  and learns nothing about which services exist. A listing holds only granted
+  services that exist.
+- When the grants change, the host ends each open stream whose grant is gone.
+- A key with an entry in the grants is allowed to traverse (see Punch), and
+  the allow is revoked when the entry goes. Every other key is served through
+  the relay only.
+
+### Limits
+
+- 64 connections per host, counted from the start of the handshake. Past
+  that, the host refuses the handshake.
+- 4 connections per key with an entry in the grants, and 8 for all other keys
+  together. Past that, the host closes the connection with code 2. Code 1
+  closes a connection whose peer presented no key.
+- 32 open streams per connection. Further streams wait.
+- A stream ends after 600 s with no byte in either direction, or when one
+  write is stuck that long.
+
 ## What the relay knows
 
 Keys online and their addresses, session lifetimes, which pairs exchange

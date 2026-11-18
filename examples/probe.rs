@@ -7,6 +7,7 @@
 //! NATTY_CA=<pem> adds a trusted root, for relays with self-signed certs.
 //! NATTY_KEY=<file> keeps the same key, and so the same address, across runs.
 
+#[path = "../src/bin/natty/env.rs"]
 mod common;
 
 use std::io;

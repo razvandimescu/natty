@@ -16,5 +16,5 @@ tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-threa
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 
 [dev-dependencies]
-natty = { path = "..", features = ["quic"] }
+natty = { path = "..", features = ["tunnel"] }
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
