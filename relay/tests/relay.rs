@@ -1,13 +1,16 @@
+use std::collections::{BTreeSet, HashMap};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use natty::quinn::Connection;
+use natty::tunnel::{self, OpenError, Policy, Status};
 use natty::wire::{self, CloseReason, Frame};
-use natty::{Endpoint, SecretKey};
+use natty::{Endpoint, PublicKey, SecretKey};
 use natty_relay::{Config, Relay};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use tokio::sync::watch;
 use tokio_rustls::client::TlsStream;
 use tokio_rustls::rustls::crypto::ring;
 use tokio_rustls::rustls::pki_types::{PrivatePkcs8KeyDer, ServerName};
@@ -316,7 +319,11 @@ async fn stun_reports_reflexive_address() {
 }
 
 async fn endpoint(h: &Harness, secret: SecretKey) -> Endpoint {
-    let endpoint = Endpoint::bind(secret, &h.relay, h.tls.clone(), &[b"test"]).unwrap();
+    bound(h, secret, b"test").await
+}
+
+async fn bound(h: &Harness, secret: SecretKey, alpn: &[u8]) -> Endpoint {
+    let endpoint = Endpoint::bind(secret, &h.relay, h.tls.clone(), &[alpn]).unwrap();
     endpoint
         .relay_state()
         .wait_for(Option::is_some)
@@ -493,5 +500,110 @@ async fn closed_endpoint_tells_its_peers_before_it_goes() {
     assert!(matches!(
         reason,
         natty::quinn::ConnectionError::ApplicationClosed(_)
+    ));
+}
+
+async fn echo_upstream() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    tokio::spawn(async move {
+        while let Ok((mut tcp, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let (mut rx, mut tx) = tcp.split();
+                let _ = tokio::io::copy(&mut rx, &mut tx).await;
+            });
+        }
+    });
+    addr
+}
+
+fn grants(peer: PublicKey, services: &[&str]) -> HashMap<PublicKey, BTreeSet<String>> {
+    HashMap::from([(peer, services.iter().map(|s| s.to_string()).collect())])
+}
+
+/// A host that serves `policy`, and a dialer connected to it.
+async fn tunnel_pair(h: &Harness, policy: Policy) -> (watch::Sender<Policy>, Endpoint, Connection) {
+    let host = bound(h, SecretKey::generate(), tunnel::ALPN).await;
+    let host_key = host.public_key();
+    let (tx, rx) = watch::channel(policy);
+    tokio::spawn(async move { tunnel::serve(&host, rx).await });
+    let dialer = bound(h, SecretKey::generate(), tunnel::ALPN).await;
+    let conn = tunnel::dial(&dialer, host_key).await.unwrap();
+    (tx, dialer, conn)
+}
+
+#[tokio::test]
+async fn tunnel_opens_granted_services_and_refuses_the_rest() {
+    let h = start(0, 16).await;
+    let closed = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let down = closed.local_addr().unwrap().to_string();
+    drop(closed);
+    let upstreams = HashMap::from([
+        ("echo".to_string(), echo_upstream().await),
+        ("down".to_string(), down),
+        ("private".to_string(), echo_upstream().await),
+    ]);
+    let (tx, dialer, conn) = tunnel_pair(&h, Policy::default()).await;
+    assert!(matches!(
+        tunnel::open(&conn, "echo").await,
+        Err(OpenError::Refused(Status::Denied))
+    ));
+    assert!(tunnel::list(&conn).await.unwrap().is_empty());
+
+    tx.send_replace(Policy {
+        grants: grants(dialer.public_key(), &["echo", "down", "gone"]),
+        upstreams,
+    });
+    assert_eq!(tunnel::list(&conn).await.unwrap(), ["down", "echo"]);
+    let (mut send, mut recv) = tunnel::open(&conn, "Echo").await.unwrap();
+    send.write_all(b"through the tunnel").await.unwrap();
+    send.finish().unwrap();
+    let echoed = tokio::time::timeout(Duration::from_secs(10), recv.read_to_end(1024))
+        .await
+        .expect("the upstream never answered")
+        .unwrap();
+    assert_eq!(echoed, b"through the tunnel");
+
+    for (service, status) in [
+        ("private", Status::Denied),
+        ("nowhere", Status::Denied),
+        ("gone", Status::Unknown),
+        ("down", Status::Unavailable),
+    ] {
+        match tunnel::open(&conn, service).await {
+            Err(OpenError::Refused(refused)) => assert_eq!(refused, status, "{service}"),
+            other => panic!("{service}: {:?}", other.map(|_| "opened")),
+        }
+    }
+}
+
+#[tokio::test]
+async fn tunnel_ends_an_open_stream_when_its_grant_goes() {
+    let h = start(0, 16).await;
+    let upstreams = HashMap::from([("echo".to_string(), echo_upstream().await)]);
+    let (tx, dialer, conn) = tunnel_pair(&h, Policy::default()).await;
+    let granted = |services: &[&str]| Policy {
+        grants: grants(dialer.public_key(), services),
+        upstreams: upstreams.clone(),
+    };
+    tx.send_replace(granted(&["echo", "other"]));
+
+    let (mut send, mut recv) = tunnel::open(&conn, "echo").await.unwrap();
+    send.write_all(b"1").await.unwrap();
+    assert_eq!(recv.read_u8().await.unwrap(), b'1');
+
+    tx.send_replace(granted(&["echo"]));
+    send.write_all(b"2").await.unwrap();
+    assert_eq!(recv.read_u8().await.unwrap(), b'2');
+
+    tx.send_replace(granted(&[]));
+    let rest = tokio::time::timeout(Duration::from_secs(10), recv.read_to_end(1024))
+        .await
+        .expect("the stream outlived its grant")
+        .unwrap();
+    assert!(rest.is_empty());
+    assert!(matches!(
+        tunnel::open(&conn, "echo").await,
+        Err(OpenError::Refused(Status::Denied))
     ));
 }

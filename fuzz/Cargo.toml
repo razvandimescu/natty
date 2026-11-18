@@ -5,7 +5,7 @@ metadata.cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-natty = { path = ".." }
+natty = { path = "..", features = ["tunnel"] }
 
 [[bin]]
 name = "frame"
@@ -26,6 +26,10 @@ path = "fuzz_targets/signal.rs"
 [[bin]]
 name = "key"
 path = "fuzz_targets/key.rs"
+
+[[bin]]
+name = "tunnel"
+path = "fuzz_targets/tunnel.rs"
 
 # Keeps the fuzzers out of the natty workspace and its build.
 [workspace]

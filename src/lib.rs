@@ -5,6 +5,8 @@ mod client;
 mod endpoint;
 mod key;
 pub mod stun;
+#[cfg(feature = "tunnel")]
+pub mod tunnel;
 pub mod wire;
 
 pub use client::connect;
