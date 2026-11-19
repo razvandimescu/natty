@@ -1,4 +1,4 @@
-.PHONY: build test lint audit fuzz fuzz-cmin
+.PHONY: build test lint audit version check-version fuzz fuzz-cmin
 
 FUZZ_TOOLCHAIN := nightly-2025-12-01
 FUZZ_TARGET ?= frame
@@ -20,6 +20,10 @@ lint: audit
 	cargo clippy --all-targets --all-features -- -D warnings
 audit:
 	cargo audit
+version:
+	perl scripts/version.pl set $(V)
+check-version:
+	perl scripts/version.pl check
 # New inputs go to the first directory, so fuzz/seeds stays as committed.
 fuzz:
 	mkdir -p fuzz/corpus/$(FUZZ_TARGET)
