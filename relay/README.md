@@ -12,7 +12,7 @@ Each peer keeps one TLS session to a relay. The relay forwards packets between t
 cargo install natty-relay
 ```
 
-The image `ghcr.io/razvandimescu/natty-relay:v0.0.3` holds the relay for linux/amd64. It takes the same flags. To build the image yourself, use the target `natty-relay` of the [Dockerfile](https://github.com/razvandimescu/natty/blob/main/Dockerfile) in the natty repository.
+To build the image yourself, use the target `natty-relay` of the [Dockerfile](https://github.com/razvandimescu/natty/blob/main/Dockerfile) in the natty repository.
 
 ## Run
 
