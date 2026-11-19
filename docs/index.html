@@ -388,7 +388,7 @@ h1, .intro, .replay, .run { animation: rise .7s ease-out both; }
   <h1>Connect to a peer behind NAT by its <em>key</em></h1>
 
   <div class="intro">
-    <p class="lede">An application reaches its peer by public key, through a relay that both peers use. When the two NATs allow it, the peers open a direct UDP path through them (hole punching). When they do not, the relay forwards the encrypted packets</p>
+    <p class="lede">An application reaches its peer by public key, through a relay that both peers use. When the two NATs allow it, the peers open a direct UDP path through them (hole punching). When they do not, the relay forwards the encrypted packets.</p>
     <p class="status"><a href="https://github.com/razvandimescu/natty/releases/tag/v0.0.3"><b>0.0.3.</b></a> - latest release</p>
   </div>
 
@@ -625,18 +625,18 @@ stun_responses 0</code></pre>
 
   <section id="status" class="sec wrap" aria-labelledby="status-title">
     <header class="sec-head">
-      <p class="eyebrow">status</p>
-      <h2 id="status-title">Before you <em>depend</em> on it</h2>
+      <p class="eyebrow">scope</p>
+      <h2 id="status-title">Scope and <em>status</em></h2>
     </header>
     <div class="body other">
+      <p>natty is for applications that already have the address of each peer: its key and its relay.</p>
       <h3>Use a different tool when you need</h3>
       <ul>
-        <li>Discovery or lookup of keys. natty never publishes or looks up keys.</li>
+        <li>Discovery or lookup of keys. natty never publishes or searches for keys.</li>
         <li>A mesh, a VPN or an overlay network, for example Tailscale or ZeroTier.</li>
         <li>Connections to browsers, for example WebRTC.</li>
         <li>Access without natty on the client side, for example a public URL.</li>
         <li>A tunnel for UDP services. The CLI forwards only TCP.</li>
-        <li>A stable API now.</li>
       </ul>
       <p class="links"><a href="https://github.com/razvandimescu/natty#limits">All limits in the README</a>&nbsp;· <a href="https://github.com/razvandimescu/natty/blob/main/ROADMAP.md">Roadmap</a>&nbsp;· <a href="https://github.com/razvandimescu/natty/blob/main/SECURITY.md">Security</a></p>
     </div>

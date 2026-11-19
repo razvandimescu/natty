@@ -4,7 +4,7 @@ natty-relay is the relay server for [natty](https://github.com/razvandimescu/nat
 
 Each peer keeps one TLS session to a relay. The relay forwards packets between the sessions by public key. Its STUN responder tells each peer its public address. The peers use these addresses to open a direct path through their NATs (hole punching). If the punch does not succeed, the relay continues to forward the encrypted packets.
 
-[An animated walk-through](https://razvandimescu.github.io/natty/how-it-works.html) shows one connection, step by step.
+[The project page](https://razvandimescu.github.io/natty/) replays two runs between two peers behind NAT. The run with the [opener](https://github.com/razvandimescu/natty#how-it-works) moves to a direct path. The run without it stays on the relay.
 
 ## Install
 
@@ -12,7 +12,7 @@ Each peer keeps one TLS session to a relay. The relay forwards packets between t
 cargo install natty-relay
 ```
 
-To build the image yourself, use the target `natty-relay` of the [Dockerfile](https://github.com/razvandimescu/natty/blob/main/Dockerfile)
+To build the image yourself, use the target `natty-relay` of the [Dockerfile](https://github.com/razvandimescu/natty/blob/main/Dockerfile).
 
 ## Run
 
@@ -71,7 +71,7 @@ A public relay can use `--total-cap` to stay inside its traffic budget.
 
 ## What the relay sees
 
-The relay sees which keys are online, their addresses, and which pairs of keys exchange packets. It does not see the QUIC payload. The relay code has no per-session log path. It keeps only aggregate counters. The [natty README](https://github.com/razvandimescu/natty#what-the-relay-sees) has the full list.
+The relay sees which keys are online, their addresses, and which pairs of keys exchange packets. It does not see the QUIC payload. The relay code has no per-session log path. It keeps only aggregate counters. [What the relay knows](https://github.com/razvandimescu/natty/blob/main/docs/design.md#what-the-relay-knows) has the full list.
 
 ## Security
 
