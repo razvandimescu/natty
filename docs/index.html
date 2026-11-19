@@ -1,0 +1,909 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>natty: connect to a peer behind NAT by its key</title>
+<meta name="description" content="Connect two applications behind NAT by public key">
+<script>document.documentElement.className = 'js'</script>
+<link rel="preconnect" href="https://fonts.bunny.net">
+<link rel="stylesheet" href="https://fonts.bunny.net/css?family=newsreader:400,400i,500|ibm-plex-mono:400,500&display=swap">
+<style>
+:root {
+  --paper: #f1ede2;
+  --tape: #faf7ef;
+  --ink: #1c2431;
+  --soft: #5d6677;
+  --faint: #a3a9b3;
+  --grid: rgba(44, 82, 140, .07);
+  --grid-major: rgba(44, 82, 140, .13);
+  --relay: #2c5aa0;
+  --accent: #d4461c;
+  --net: rgba(44, 82, 140, .05);
+  --code: #1c2431;
+  --code-ink: #f1ede2;
+  --code-soft: #a3a9b3;
+  --rule: color-mix(in srgb, var(--ink) 28%, transparent);
+  --serif: "Newsreader", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #0f2742;
+    --tape: #133050;
+    --ink: #e8edf3;
+    --soft: #9eb0c7;
+    --faint: #5b7596;
+    --grid: rgba(180, 210, 255, .06);
+    --grid-major: rgba(180, 210, 255, .11);
+    --relay: #8db4ff;
+    --accent: #ff8a45;
+    --net: rgba(180, 210, 255, .045);
+    --code: #07131f;
+    --code-ink: #e8edf3;
+    --code-soft: #9eb0c7;
+  }
+}
+
+* { box-sizing: border-box; }
+html { color-scheme: light dark; }
+body {
+  margin: 0;
+  color: var(--ink);
+  font: 19px/1.5 var(--serif);
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(var(--grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px),
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 120px 120px, 120px 120px, 24px 24px, 24px 24px;
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: .22;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .55 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+@media (prefers-color-scheme: dark) { body::before { opacity: .1; mix-blend-mode: screen; } }
+
+a { color: inherit; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+code { font: .8em var(--mono); padding: 1px 5px; background: color-mix(in srgb, var(--ink) 13%, transparent); }
+pre {
+  margin: 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  font: 12px/1.6 var(--mono);
+  color: var(--code-ink);
+  color-scheme: dark;
+  background: var(--code);
+  border: 1px solid var(--ink);
+}
+pre code { font: inherit; padding: 0; background: none; }
+pre .c { color: var(--code-soft); }
+
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.wrap {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding-inline: 32px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  column-gap: 48px;
+}
+.full { grid-column: 1 / -1; }
+
+.eyebrow {
+  margin: 0;
+  font: 500 12px/1.3 var(--mono);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--soft);
+}
+
+.hero {
+  padding-top: 40px;
+  padding-bottom: 72px;
+  grid-template-areas: "top top" "title intro" "figure intro" "figure log";
+  grid-template-rows: auto auto 1fr auto;
+}
+.topline { grid-area: top; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 24px; }
+.topline nav { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+.topline nav a { text-decoration: none; }
+.topline nav a:hover { color: var(--ink); }
+.topline svg, .colophon svg { width: 14px; height: 14px; margin-right: 6px; vertical-align: -2px; fill: currentColor; }
+h1 {
+  grid-area: title;
+  margin: 26px 0 20px;
+  font-weight: 400;
+  font-size: clamp(42px, 5.4vw, 76px);
+  line-height: .98;
+  letter-spacing: -.025em;
+  text-wrap: balance;
+}
+h1 em { color: var(--accent); }
+.intro { grid-area: intro; padding-top: 32px; }
+.lede { margin: 0 0 16px; line-height: 1.42; }
+.status {
+  margin: 0;
+  padding: 9px 12px;
+  font: 12.5px/1.55 var(--mono);
+  border: 1px solid var(--ink);
+  border-left: 4px solid var(--accent);
+  background: var(--tape);
+}
+.status b { font-weight: 500; color: var(--accent); }
+
+.replay { grid-area: figure; display: flex; flex-direction: column; margin: 0; min-width: 0; }
+.fig-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; font-size: 11px; letter-spacing: .12em; }
+html:not(.js) .hint { display: none; }
+
+#map { display: block; flex: 1 1 0; width: 100%; height: auto; min-height: 280px; margin-top: 4px; }
+#map text { font-family: var(--mono); font-size: 18px; fill: var(--ink); }
+#map .t-serif { font-family: var(--serif); font-style: italic; font-size: 34px; }
+#map .t-small { font-size: 13px; letter-spacing: .12em; }
+#map .t-note { font-size: 16px; }
+#map .t-soft { fill: var(--soft); }
+
+.hatch-bg { fill: var(--paper); }
+.hatch-line { stroke: var(--ink); stroke-width: 1.3; opacity: .55; }
+.net { fill: var(--net); }
+.wall { fill: none; stroke: url(#hatch); stroke-width: 14; }
+.edge { fill: none; stroke: var(--ink); stroke-width: 1; }
+.gap, .door-gap { fill: var(--paper); }
+.jamb { stroke: var(--ink); stroke-width: 1; }
+.relay-box { fill: var(--tape); stroke: var(--ink); stroke-width: 1.5; }
+.relay-inner { fill: none; stroke: var(--ink); stroke-width: .7; }
+.device { fill: var(--tape); stroke: var(--ink); stroke-width: 1.5; stroke-linejoin: round; }
+.chip { fill: var(--ink); }
+.header-pins { stroke: var(--ink); stroke-width: 3; stroke-dasharray: 2 2.5; }
+
+.pipe { fill: none; stroke: var(--ink); stroke-width: 6; }
+.pipe-core { fill: none; stroke: var(--paper); stroke-width: 2.6; transition: stroke .4s; }
+.pipes { transition: opacity .5s; }
+.direct-up .pipes { opacity: .45; }
+.relay-up .pipes .pipe-core { stroke: var(--relay); }
+.draw { stroke-dasharray: var(--len); }
+.js .pipes .draw { animation: draw 1.1s cubic-bezier(.6, 0, .3, 1) both; }
+@keyframes draw { from { stroke-dashoffset: var(--len); } to { stroke-dashoffset: 0; } }
+
+.direct { fill: none; stroke: var(--faint); stroke-width: 1.5; stroke-dasharray: 3 7; opacity: 0; transition: opacity .4s; }
+.direct-try .direct { opacity: 1; }
+.direct-solid { fill: none; stroke: var(--accent); stroke-width: 4; opacity: 0; }
+.direct-up .direct-solid { opacity: 1; animation: draw .6s ease-out both; }
+
+.door-gap { opacity: 0; transition: opacity .2s; }
+.flap { stroke: var(--ink); stroke-width: 3; stroke-linecap: round; transform-box: view-box; transition: transform .5s cubic-bezier(.3, 1.5, .5, 1); }
+.door-a .door.a .door-gap, .door-b .door.b .door-gap { opacity: 1; }
+.door-a .door.a .flap { transform: rotate(-58deg); }
+.door-b .door.b .flap { transform: rotate(58deg); }
+
+.ttl-tag, .moved-tag, .noanswer { opacity: 0; transition: opacity .3s; }
+.ttl .ttl-tag, .moved .moved-tag, .failed .noanswer { opacity: 1; }
+#map .ttl-tag, #map .moved-tag { font-size: 16px; font-weight: 500; }
+#pathlabel { font-weight: 500; transition: fill .3s; }
+.direct-up #pathlabel { fill: var(--accent); }
+.relay-up #pathlabel { fill: var(--relay); }
+
+.glyph.quic rect { fill: var(--ink); }
+.glyph.card rect { fill: var(--tape); stroke: var(--relay); stroke-width: 1.4; }
+.glyph.card line { stroke: var(--relay); stroke-width: 1.2; }
+.glyph.probe polygon { fill: var(--paper); stroke: var(--accent); stroke-width: 2; }
+.glyph.ack polygon { fill: var(--accent); }
+.glyph.cross path { fill: none; stroke: var(--accent); stroke-width: 2.4; stroke-linecap: round; }
+.glyph.cross { animation: fade 1.6s forwards; }
+@keyframes fade { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
+
+.endings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 12px; border: 1px solid var(--ink); }
+.ending {
+  all: unset;
+  box-sizing: border-box;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  column-gap: 12px;
+  padding: 11px 16px 12px;
+  color: var(--soft);
+  background: var(--paper);
+  cursor: pointer;
+  transition: background .2s;
+}
+.ending + .ending { border-left: 1px solid var(--ink); }
+.ending[data-run="on"] { --path: var(--accent); }
+.ending[data-run="off"] { --path: var(--relay); }
+.ending.played { --p: 1; }
+html:not(.js) .ending { pointer-events: none; }
+.ending:hover { background: var(--tape); }
+.ending:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; z-index: 2; }
+.ending[aria-pressed="true"] {
+  z-index: 1;
+  color: var(--ink);
+  background: var(--tape);
+  box-shadow: 7px 7px 0 -1px var(--paper), 7px 7px 0 0 var(--ink);
+  outline: 1px solid var(--ink);
+}
+.ending::before {
+  content: "";
+  position: absolute;
+  inset: -1px 0 auto;
+  height: 3px;
+  background: var(--path);
+  transform: scaleX(var(--p, 0));
+  transform-origin: left;
+}
+.what { grid-column: 1 / -1; display: flex; justify-content: space-between; margin-bottom: 5px; font: 500 11px/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+.js .ending[aria-pressed="true"].played .what::after { content: "↻"; color: var(--path); font-size: 14px; line-height: 1; letter-spacing: 0; }
+.word { font: italic 400 clamp(40px, 4.3vw, 58px)/1.02 var(--serif); letter-spacing: -.015em; }
+.clock { padding-bottom: 7px; font: 500 clamp(18px, 1.9vw, 25px)/1 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ending[aria-pressed="true"].played :is(.word, .clock) { color: var(--path); }
+.says { grid-column: 1 / -1; font-size: 15.5px; line-height: 1.3; }
+
+.tape {
+  position: relative;
+  padding: 22px 22px 18px 34px;
+  background: var(--tape);
+  border: 1px solid var(--ink);
+  box-shadow: 7px 7px 0 -1px var(--paper), 7px 7px 0 0 var(--ink);
+}
+.tape::before {
+  content: "";
+  position: absolute;
+  left: 11px;
+  top: 12px;
+  bottom: 12px;
+  width: 8px;
+  background: radial-gradient(circle, var(--paper) 2.4px, var(--ink) 2.5px, var(--ink) 3.1px, transparent 3.3px) 0 0 / 8px 16px repeat-y;
+}
+.tape h2 { margin: 0; font: italic 400 27px/1.1 var(--serif); }
+.host { margin: 4px 0 12px; font: 12px/1.3 var(--mono); color: var(--soft); }
+.ledger, .log { list-style: none; margin: 0; padding: 0; font: 12.5px/1.42 var(--mono); }
+.ledger li, .log li {
+  display: grid;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px dashed var(--rule);
+  color: var(--soft);
+  overflow-wrap: anywhere;
+}
+.ledger li { grid-template-columns: 76px minmax(0, 1fr); }
+.ledger b, .log b { font-weight: 500; color: var(--ink); }
+.ledger .tag { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; padding-top: 1px; }
+.ledger .unseen > span:last-child { padding-left: 8px; border-left: 2px solid var(--accent); }
+.ledger code, .ledger-note code { font-size: .85em; padding: 0 3px; }
+.ledger-note { margin: 10px 0 0; padding-top: 9px; border-top: 1px solid var(--ink); font-size: 15px; line-height: 1.36; color: var(--soft); }
+.ledger-note + .ledger-note { margin-top: 6px; padding-top: 0; border-top: 0; }
+
+.run { grid-area: log; align-self: end; margin-top: 24px; padding-top: 16px; padding-bottom: 14px; }
+.logs { display: grid; }
+.logs > .log { grid-area: 1 / 1; }
+.js .logs[data-show="on"] > [data-log="off"], .js .logs[data-show="off"] > [data-log="on"] { visibility: hidden; }
+html:not(.js) [data-log="off"] { display: none; }
+.log li { grid-template-columns: 42px minmax(0, 1fr); }
+.log time { color: var(--faint); }
+.log .key, .log .key time { color: var(--ink); font-weight: 500; }
+.js .log li:not(.on) { visibility: hidden; }
+.log li.typed { animation: type .4s steps(18, end) both; }
+@keyframes type { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+
+.sec { padding-bottom: 88px; }
+.sec-head { grid-column: 1 / -1; padding-top: 16px; margin-bottom: 28px; border-top: 1px solid var(--ink); }
+.sec-head h2 { margin: 12px 0 0; font: 400 clamp(34px, 4.2vw, 52px)/1.04 var(--serif); letter-spacing: -.015em; }
+.sec-head h2 em { color: var(--accent); }
+.body p { max-width: 62ch; margin: 0 0 14px; }
+.body pre { margin: 0 0 16px; font-size: 13px; }
+.note { max-width: 74ch; margin: 26px 0 0; color: var(--soft); }
+.side { align-self: start; }
+
+.parts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--ink); background: var(--paper); }
+.part { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 18px; }
+.part + .part { border-left: 1px solid var(--ink); }
+.part h3 { margin: 0; font: italic 400 36px/1 var(--serif); }
+.part p { margin: 0; font-size: 17px; line-height: 1.4; }
+.part p:first-of-type { min-height: 4.2em; }
+.part pre { flex: 1; }
+.part a { font: 500 11px/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); text-decoration: none; }
+.part a:hover { text-decoration: underline; }
+
+.paths { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 48px; }
+.path { padding-top: 12px; --mark: var(--accent); border-top: 4px solid var(--accent); }
+.path.relayed { --mark: var(--relay); border-top: 6px double var(--ink); }
+.path ul { list-style: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin: 18px 0 0; padding: 0; }
+.path li { font-size: 16.5px; line-height: 1.36; }
+.path b { display: block; margin-bottom: 8px; font: italic 400 clamp(58px, 6.6vw, 88px)/.92 var(--serif); letter-spacing: -.02em; color: var(--mark); white-space: nowrap; }
+.path small { margin-left: 5px; font: 500 13px/1 var(--mono); letter-spacing: 0; color: var(--soft); }
+
+.other h3 { margin: 0 0 8px; font: italic 400 26px/1.1 var(--serif); }
+.other ul { list-style: none; margin: 0 0 16px; padding: 0; }
+.other li { position: relative; max-width: 66ch; padding: 9px 0 9px 28px; border-top: 1px dashed var(--rule); font-size: 17.5px; line-height: 1.4; }
+.other li::before { content: "\2212"; position: absolute; left: 2px; top: 9px; font: 500 16px/1.45 var(--mono); color: var(--soft); }
+.links { font: 12px/1.6 var(--mono); color: var(--soft); }
+
+.colophon { padding-bottom: 64px; font: 12px/1.7 var(--mono); color: var(--soft); text-align: center; }
+.colophon p { margin: 0; padding-top: 14px; border-top: 1px solid var(--ink); }
+.colophon p + p { border-top: 0; padding-top: 6px; }
+.links a, .colophon a { white-space: nowrap; }
+
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+h1, .intro, .replay, .run { animation: rise .7s ease-out both; }
+.intro { animation-delay: .1s; }
+.replay { animation-delay: .18s; }
+.run { animation-delay: .3s; }
+
+@media (max-width: 1000px) {
+  .wrap { grid-template-columns: minmax(0, 1fr); }
+  .hero { grid-template-areas: "top" "title" "intro" "figure" "log"; grid-template-rows: none; }
+  .intro { padding-top: 0; margin-bottom: 28px; }
+  .replay { display: block; }
+  .side { margin-top: 30px; }
+}
+@media (max-width: 760px) {
+  body { font-size: 18px; }
+  .wrap { padding-inline: 18px; }
+  .parts, .paths { grid-template-columns: minmax(0, 1fr); }
+  .part + .part { border-left: 0; border-top: 1px solid var(--ink); }
+  .part p:first-of-type { min-height: 0; }
+  #map { min-height: 0; }
+  #map text { font-size: 27px; }
+  #map .t-serif { font-size: 42px; }
+  #map .m-hide { display: none; }
+  #map .ttl-tag, #map .moved-tag { font-size: 23px; }
+  #map #pathlabel { transform: translateY(-34px); }
+  #map .moved-tag.b { transform: translateY(34px); }
+  #map .noanswer { transform: translateY(44px); }
+  #map .relay-name { transform: translateY(16px); }
+  #map .pi-name { transform: translateX(-16px); }
+  .part pre { font-size: 11.5px; }
+}
+@media (max-width: 540px) {
+  .endings { grid-template-columns: minmax(0, 1fr); }
+  .ending + .ending { border-left: 0; border-top: 1px solid var(--ink); }
+  .hint { display: none; }
+  .path ul { gap: 18px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<header class="hero wrap">
+  <div class="topline eyebrow">
+    <span>natty · 0.0.3</span>
+    <nav aria-label="Project">
+      <a href="how-it-works.html">Walk-through</a>
+      <a href="https://github.com/razvandimescu/natty"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a>
+      <a href="https://crates.io/crates/natty">crates.io</a>
+    </nav>
+  </div>
+
+  <h1>Connect to a peer behind NAT by its <em>key</em></h1>
+
+  <div class="intro">
+    <p class="lede">An application reaches its peer by public key, through a relay that both peers use. When the two NATs allow it, the peers open a direct UDP path through them (hole punching). When they do not, the relay forwards the encrypted packets</p>
+    <p class="status"><a href="https://github.com/razvandimescu/natty/releases/tag/v0.0.3"><b>0.0.3.</b></a> - latest release</p>
+  </div>
+
+  <figure class="replay">
+    <figcaption class="fig-head eyebrow"><span>Replay · one pair of routers, two endings</span><span class="hint">Press an ending to replay it</span></figcaption>
+    <svg id="map" class="direct-up door-a door-b" viewBox="0 20 1000 570" role="img" aria-labelledby="map-title">
+      <title id="map-title">A laptop behind a home router and a Raspberry Pi behind an office router. Each one keeps a session to one relay. A direct UDP path can join them.</title>
+      <defs>
+        <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect class="hatch-bg" width="6" height="6"/>
+          <line class="hatch-line" x1="0" y1="0" x2="0" y2="6"/>
+        </pattern>
+      </defs>
+
+      <text class="t-small t-soft m-hide" x="500" y="566" text-anchor="middle">INTERNET</text>
+
+      <rect class="net" x="54" y="314" width="272" height="242"/>
+      <rect class="net" x="674" y="314" width="272" height="242"/>
+
+      <g>
+        <rect class="wall" x="47" y="307" width="286" height="256"/>
+        <rect class="edge" x="40" y="300" width="300" height="270"/>
+        <rect class="edge" x="54" y="314" width="272" height="242"/>
+        <rect class="wall" x="667" y="307" width="286" height="256"/>
+        <rect class="edge" x="660" y="300" width="300" height="270"/>
+        <rect class="edge" x="674" y="314" width="272" height="242"/>
+      </g>
+      <rect class="gap" x="240" y="297" width="20" height="20"/>
+      <rect class="gap" x="740" y="297" width="20" height="20"/>
+
+      <g class="door a">
+        <rect class="door-gap" x="325" y="438" width="16" height="28"/>
+        <line class="jamb" x1="326" y1="438" x2="340" y2="438"/>
+        <line class="jamb" x1="326" y1="466" x2="340" y2="466"/>
+        <line class="flap" x1="333" y1="438" x2="333" y2="466" style="transform-origin: 333px 438px"/>
+      </g>
+      <g class="door b">
+        <rect class="door-gap" x="659" y="438" width="16" height="28"/>
+        <line class="jamb" x1="660" y1="438" x2="674" y2="438"/>
+        <line class="jamb" x1="660" y1="466" x2="674" y2="466"/>
+        <line class="flap" x1="667" y1="438" x2="667" y2="466" style="transform-origin: 667px 438px"/>
+      </g>
+
+      <path id="direct" class="route direct" d="M202 452 L798 452"/>
+      <path class="direct-solid draw" d="M202 452 L798 452"/>
+
+      <g class="pipes">
+        <path id="r-a" class="route pipe draw" d="M160 422 C165 368 230 335 250 307 C270 279 430 200 440 136"/>
+        <path class="pipe-core draw" d="M160 422 C165 368 230 335 250 307 C270 279 430 200 440 136"/>
+        <path id="r-b" class="route pipe draw" d="M840 422 C835 368 770 335 750 307 C730 279 570 200 560 136"/>
+        <path class="pipe-core draw" d="M840 422 C835 368 770 335 750 307 C730 279 570 200 560 136"/>
+      </g>
+
+      <rect class="relay-box" x="380" y="36" width="240" height="100"/>
+      <rect class="relay-inner" x="385" y="41" width="230" height="90"/>
+      <text class="t-serif relay-name" x="500" y="82" text-anchor="middle">relay</text>
+      <text class="t-note t-soft m-hide" x="500" y="113" text-anchor="middle">forwards by key</text>
+
+      <rect class="device" x="138" y="422" width="64" height="40"/>
+      <path class="device" d="M126 466 H214 L208 474 H132 Z"/>
+      <text class="t-serif" x="170" y="520" text-anchor="middle">laptop</text>
+
+      <rect class="device" x="798" y="422" width="64" height="40"/>
+      <line class="header-pins" x1="804" y1="429" x2="856" y2="429"/>
+      <rect class="chip" x="820" y="437" width="18" height="16"/>
+      <text class="t-serif pi-name" x="830" y="520" text-anchor="middle">Raspberry Pi</text>
+
+      <text x="40" y="288"><tspan class="m-hide" font-weight="500">NAT </tspan><tspan class="t-soft">home router</tspan></text>
+      <text x="960" y="288" text-anchor="end"><tspan class="m-hide" font-weight="500">NAT </tspan><tspan class="t-soft">office router</tspan></text>
+
+      <text id="pathlabel" x="500" y="424" text-anchor="middle">path direct</text>
+      <text class="ttl-tag" x="381" y="424" text-anchor="middle">TTL 2</text>
+      <text class="ttl-tag" x="619" y="424" text-anchor="middle">TTL 2</text>
+      <text class="moved-tag a" x="348" y="490">port changed</text>
+      <text class="moved-tag b" x="652" y="490" text-anchor="end">port changed</text>
+      <text class="noanswer t-soft" x="500" y="526" text-anchor="middle">no probe arrived</text>
+
+      <g id="packets"></g>
+    </svg>
+
+    <div class="endings" role="group" aria-label="Endings of the test">
+      <button class="ending played" type="button" data-run="on" aria-pressed="true">
+        <span class="what">opener on</span>
+        <span class="word">direct</span>
+        <span class="clock">0.49 s</span>
+        <span class="says">The connection moved to a direct UDP path.</span>
+      </button>
+      <button class="ending" type="button" data-run="off" aria-pressed="false">
+        <span class="what">opener off</span>
+        <span class="word">relayed</span>
+        <span class="clock">3.00 s</span>
+        <span class="says">No probe arrived. The connection stayed on the relay.</span>
+      </button>
+    </div>
+    <p id="said" class="sr" aria-live="polite"></p>
+  </figure>
+
+  <aside class="tape run" aria-labelledby="log-title">
+    <h2 id="log-title">Test log</h2>
+    <p class="host">2026-10-24 · laptop to Raspberry Pi</p>
+    <div class="logs" data-show="on">
+      <ol class="log" data-log="on">
+        <li class="key"><time>0.00</time><span>The punch starts.</span></li>
+        <li><time>·</time><span>Candidates cross the relay.</span></li>
+        <li><time>·</time><span>Openers leave. They expire before the far NAT.</span></li>
+        <li><time>·</time><span>Probes leave at least 200 ms later.</span></li>
+        <li class="key"><time>0.42</time><span>The first probe arrives.</span></li>
+        <li class="key"><time>0.49</time><span>Both sides have a direct path.</span></li>
+      </ol>
+      <ol class="log" data-log="off">
+        <li class="key"><time>0.00</time><span>The punch starts.</span></li>
+        <li class="key"><time>~0.07</time><span>Candidates cross the relay.</span></li>
+        <li><time>·</time><span>Both sides start to probe within 10 ms of each other.</span></li>
+        <li><time>·</time><span>Probes arrive early. Each NAT changes the port.</span></li>
+        <li class="key"><time>3.00</time><span>No probe arrived. Both sides stay on the relay.</span></li>
+      </ol>
+    </div>
+    <p class="ledger-note">An opener is a UDP packet with TTL&nbsp;2. It opens the local NAT to the peer.</p>
+  </aside>
+</header>
+
+<main>
+  <section class="sec wrap" aria-labelledby="parts-title">
+    <header class="sec-head">
+      <p class="eyebrow">three parts</p>
+      <h2 id="parts-title">Start with the part you <em>need</em></h2>
+    </header>
+    <div class="parts full">
+      <article class="part">
+        <h3>library</h3>
+        <p>Use it in a Rust application that must reach a peer. It gives the application a <code>quinn::Connection</code> to a peer key.</p>
+<pre><code><span class="c"># Cargo.toml</span>
+natty = "0.0.3"
+
+<span class="c">// The handshake fails unless the
+// peer holds the key `peer`.</span>
+let conn = endpoint.connect(peer).await?;
+let (mut send, recv) =
+    conn.open_bi().await?;
+send.write_all(b"hello").await?;</code></pre>
+        <a href="https://github.com/razvandimescu/natty#use-the-library">Use the library &rarr;</a>
+      </article>
+      <article class="part">
+        <h3>CLI</h3>
+        <p>Use it to share a TCP service from a machine with no inbound port. A grants file lists the keys for each service.</p>
+<pre><code><span class="c"># On both machines</span>
+cargo install natty --features cli
+export NATTY_KEY="$HOME/.natty/key"
+
+<span class="c"># On the machine with the service</span>
+natty serve relay.example.net \
+  --grants grants \
+  --service web=127.0.0.1:8000
+
+<span class="c"># On the other machine</span>
+natty connect \
+  '&lt;key&gt;@relay.example.net' web \
+  --port 8080</code></pre>
+        <a href="https://github.com/razvandimescu/natty#share-a-tcp-service">Share a service &rarr;</a>
+      </article>
+      <article class="part">
+        <h3>relay</h3>
+        <p>Run it on a host that both peers can reach. It forwards packets by key and answers STUN requests.</p>
+<pre><code>cargo install natty-relay
+
+natty-relay --cert fullchain.pem \
+  --key privkey.pem
+
+<span class="c"># The first line of the answer is ok.</span>
+curl https://relay.example.net/health</code></pre>
+        <a href="https://github.com/razvandimescu/natty#run-a-relay">Run a relay &rarr;</a>
+      </article>
+    </div>
+  </section>
+
+  <section class="sec wrap" aria-labelledby="measured-title">
+    <header class="sec-head">
+      <p class="eyebrow">measured</p>
+      <h2 id="measured-title">Numbers from <em>both</em> paths</h2>
+    </header>
+    <div class="paths full">
+      <div class="path relayed">
+        <p class="eyebrow">relay path</p>
+        <ul>
+          <li><b>104<small>ms</small></b>QUIC handshake between hosts behind the office and home routers.</li>
+          <li><b>0.80<small>MiB/s</small></b>Throughput for 8&nbsp;MB on that path. The relay cap was 1&nbsp;MiB/s.</li>
+        </ul>
+      </div>
+      <div class="path">
+        <p class="eyebrow">direct path</p>
+        <ul>
+          <li><b>2.52<small>MiB/s</small></b>Throughput for 8&nbsp;MB from a host behind the office router to a host without NAT.</li>
+          <li><b>1.3<small>%</small></b>The approximate share of those bytes that the relay carried.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec wrap" aria-labelledby="relay-title">
+    <header class="sec-head">
+      <p class="eyebrow">privacy</p>
+      <h2 id="relay-title">What the relay <em>sees</em> and what it counts</h2>
+    </header>
+    <div class="body">
+      <p>The relay code has no per-session log path. It keeps only aggregate counters. A new relay gives this answer:</p>
+<pre><code><span class="c">$ curl https://relay.example.net/health</span>
+ok
+uptime_secs 0
+sessions 0
+sessions_total 0
+auth_failed 0
+conns_rejected 0
+forwarded_frames 0
+forwarded_bytes 0
+dropped_frames 0
+peer_gone 0
+stun_responses 0</code></pre>
+      <p>natty has no default relay. Each application chooses its own.</p>
+    </div>
+    <aside class="side tape" aria-labelledby="sees-title">
+      <h2 id="sees-title">Visible to the relay</h2>
+      <p class="host">relay.example.net</p>
+      <ul class="ledger">
+        <li><span class="tag">online</span><span>The keys that are online, and their addresses.</span></li>
+        <li><span class="tag">sessions</span><span>When each session starts and stops.</span></li>
+        <li><span class="tag">pairs</span><span>Which pairs of keys exchange packets, and the byte counts.</span></li>
+        <li><span class="tag">alpn</span><span>The ALPN of each connection. The first QUIC packet is not confidential.</span></li>
+        <li><span class="tag">punch</span><span>The local and public addresses and the probe keys of peers that punch.</span></li>
+        <li class="unseen"><span class="tag">payload</span><span>The relay does not see the QUIC payload.</span></li>
+      </ul>
+      <p class="ledger-note">Any peer that knows <code>&lt;key&gt;@&lt;relay&gt;</code> can open a connection through the relay. That peer learns that the endpoint is online.</p>
+    </aside>
+  </section>
+
+  <section id="status" class="sec wrap" aria-labelledby="status-title">
+    <header class="sec-head">
+      <p class="eyebrow">status</p>
+      <h2 id="status-title">Before you <em>depend</em> on it</h2>
+    </header>
+    <div class="body other">
+      <h3>Use a different tool when you need</h3>
+      <ul>
+        <li>Discovery or lookup of keys. natty never publishes or looks up keys.</li>
+        <li>A mesh, a VPN or an overlay network, for example Tailscale or ZeroTier.</li>
+        <li>Connections to browsers, for example WebRTC.</li>
+        <li>Access without natty on the client side, for example a public URL.</li>
+        <li>A tunnel for UDP services. The CLI forwards only TCP.</li>
+        <li>A stable API now.</li>
+      </ul>
+      <p class="links"><a href="https://github.com/razvandimescu/natty#limits">All limits in the README</a>&nbsp;· <a href="https://github.com/razvandimescu/natty/blob/main/ROADMAP.md">Roadmap</a>&nbsp;· <a href="https://github.com/razvandimescu/natty/blob/main/SECURITY.md">Security</a></p>
+    </div>
+    <aside class="side tape" aria-labelledby="now-title">
+      <h2 id="now-title">Status</h2>
+      <p class="host">natty 0.0.3 · natty-relay 0.0.3</p>
+      <ul class="ledger">
+        <li><span class="tag">api</span><span><b>Each 0.0.x release can change the API.</b></span></li>
+        <li><span class="tag">review</span><span>natty has no security review yet. CI fuzzes the parsers of frames, STUN messages, signals, keys and tunnel requests.</span></li>
+        <li class="unseen"><span class="tag">not yet</span><span>natty has not yet shown direct paths over IPv6, through double NAT or carrier-grade NAT, or between peers a few hops apart.</span></li>
+        <li><span class="tag">runs on</span><span>macOS, Linux and Windows. CI tests only Linux.</span></li>
+        <li><span class="tag">license</span><span>MIT or Apache-2.0.</span></li>
+      </ul>
+    </aside>
+  </section>
+</main>
+
+<footer class="colophon wrap">
+  <div class="full">
+    <p>
+      <a href="https://github.com/razvandimescu/natty"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a>&nbsp;| <a href="https://crates.io/crates/natty">natty on crates.io</a>&nbsp;| <a href="https://crates.io/crates/natty-relay">natty-relay on crates.io</a>&nbsp;| <a href="how-it-works.html">walk-through</a>&nbsp;| <a href="https://github.com/razvandimescu/natty/blob/main/docs/design.md">wire design</a>
+    <p>Built for the friend-to-friend feature of <a href="https://github.com/razvandimescu/numa">numa</a>. natty is available under the Apache License 2.0 or the MIT license at your option.</p>
+  </div>
+</footer>
+
+<script>
+(() => {
+  const svg = document.getElementById('map');
+  const layer = document.getElementById('packets');
+  const pathLabel = document.getElementById('pathlabel');
+  const said = document.getElementById('said');
+  const logs = document.querySelector('.logs');
+  const endings = [...document.querySelectorAll('.ending')];
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const SPEED = 0.55;
+  const CARD_LEG = 550;
+  const OWN_WALL = 0.22;
+  const FAR_WALL = 0.77;
+  const OPENER_REACH = 0.3;
+  const STATES = ['door-a', 'door-b', 'direct-try', 'direct-up', 'relay-up', 'ttl', 'moved', 'failed'];
+  const SHAPES = {
+    quic: '<rect x="-5" y="-5" width="10" height="10"/>',
+    card: '<rect x="-13" y="-8" width="26" height="16"/><line x1="-8" y1="-2" x2="8" y2="-2"/><line x1="-8" y1="3" x2="4" y2="3"/>',
+    probe: '<polygon points="0,-7 7,0 0,7 -7,0"/>',
+    ack: '<polygon points="0,-7 7,0 0,7 -7,0"/>',
+    cross: '<path d="M-6 -6 L6 6 M6 -6 L-6 6"/>',
+  };
+
+  const knot = (testSeconds, replayMs) => ({ testSeconds, replayMs });
+  const RUNS = {
+    on: {
+      knots: [knot(0, 0), knot(0.07, 1100), knot(0.42, 2730), knot(0.49, 3400)],
+      last: 0.49,
+      final: ['door-a', 'door-b', 'direct-up'],
+      path: 'path direct',
+      said: 'Direct path after 0.49 seconds.',
+    },
+    off: {
+      knots: [knot(0, 0), knot(0.07, 1100), knot(3, 8000)],
+      last: 3,
+      final: ['door-a', 'door-b', 'direct-try', 'relay-up', 'moved', 'failed'],
+      path: 'path relay',
+      said: 'No probe arrived in 3 seconds. The connection stayed on the relay.',
+    },
+  };
+
+  const route = {};
+  for (const el of svg.querySelectorAll('.route')) route[el.id] = { el, len: el.getTotalLength() };
+  for (const el of svg.querySelectorAll('.draw')) el.style.setProperty('--len', el.getTotalLength());
+
+  let run = 'on', current = endings[0], rows = [], started = false;
+  let t0 = 0, raf = 0, queue = [], flights = [];
+
+  function scale(x, from, to) {
+    const { knots } = RUNS[run];
+    let i = 1;
+    while (i < knots.length - 1 && knots[i][from] < x) i++;
+    const [p, q] = [knots[i - 1], knots[i]];
+    return p[to] + (x - p[from]) * (q[to] - p[to]) / (q[from] - p[from]);
+  }
+  const replayTime = seconds => scale(seconds, 'testSeconds', 'replayMs');
+  const testTime = ms => Math.min(RUNS[run].last, Math.max(0, scale(ms, 'replayMs', 'testSeconds')));
+
+  const flag = (name, on = true) => svg.classList.toggle(name, on);
+  const after = (at, fn) => queue.push({ at, fn });
+  const showClock = (button, seconds) => { button.querySelector('.clock').textContent = `${seconds.toFixed(2)} s`; };
+
+  function line(n) {
+    const li = rows[n];
+    if (!li.classList.contains('on')) li.classList.add('on', 'typed');
+  }
+
+  function glyph(kind, p) {
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', `glyph ${kind}`);
+    g.innerHTML = SHAPES[kind];
+    if (p) g.setAttribute('transform', `translate(${p.x} ${p.y})`);
+    layer.append(g);
+    return g;
+  }
+
+  const point = (f, k) => f.r.el.getPointAtLength((f.back ? 1 - k : k) * f.r.len);
+
+  function fly(id, kind, { at, dur, back = false, to = 1, mark, drop, then }) {
+    const r = route[id];
+    after(at, start => flights.push({
+      r, back, to, mark, drop, then, start,
+      dur: dur ?? (to * r.len) / SPEED,
+      g: glyph(kind),
+    }));
+  }
+
+  function via(a, b, kind, at, leg, then) {
+    fly(a, kind, { at, dur: leg, then: t => fly(b, kind, { at: t, back: true, dur: leg, then }) });
+  }
+
+  function land(f) {
+    const end = f.start + f.dur;
+    if (f.drop) {
+      const cross = glyph('cross', point(f, f.to));
+      after(end + 1600, () => cross.remove());
+    }
+    f.g.remove();
+    f.then?.(end);
+  }
+
+  function frame(now) {
+    const t = Math.max(0, now - t0);
+    for (let due; (due = queue.filter(q => q.at <= t)).length; ) {
+      queue = queue.filter(q => q.at > t);
+      due.sort((a, b) => a.at - b.at).forEach(q => q.fn(q.at));
+    }
+    flights = flights.filter(f => {
+      const k = Math.min(1, (t - f.start) / f.dur) * f.to;
+      const p = point(f, k);
+      f.g.setAttribute('transform', `translate(${p.x.toFixed(1)} ${p.y.toFixed(1)})`);
+      if (f.mark && k >= f.mark[0]) { f.mark[1](); f.mark = null; }
+      if (k < f.to) return true;
+      land(f);
+      return false;
+    });
+    const seconds = testTime(t);
+    showClock(current, seconds);
+    current.style.setProperty('--p', (seconds / RUNS[run].last).toFixed(4));
+    raf = queue.length || flights.length ? requestAnimationFrame(frame) : 0;
+  }
+
+  function relayTraffic(until) {
+    const trip = (route['r-a'].len + route['r-b'].len) / SPEED;
+    for (let at = 150; at + trip <= until; at += 1100) {
+      via('r-a', 'r-b', 'quic', at);
+      via('r-b', 'r-a', 'quic', at + 550);
+    }
+  }
+
+  function candidates(then) {
+    via('r-a', 'r-b', 'card', 0, CARD_LEG, then);
+    via('r-b', 'r-a', 'card', 0, CARD_LEG);
+  }
+
+  const door = back => () => flag(back ? 'door-b' : 'door-a');
+
+  const SCRIPT = {
+    on() {
+      const arrives = replayTime(0.42);
+      const direct = replayTime(0.49);
+      const leaves = arrives - route.direct.len / SPEED;
+      line(0);
+      relayTraffic(direct + 500);
+      candidates(t => {
+        line(1);
+        flag('direct-try');
+        for (const back of [false, true]) {
+          fly('direct', 'probe', {
+            at: t, back, to: OPENER_REACH, drop: true,
+            mark: [OWN_WALL, () => { door(back)(); line(2); }],
+            then: () => flag('ttl'),
+          });
+        }
+      });
+      for (const back of [false, true]) {
+        fly('direct', 'probe', { at: leaves, back });
+        fly('direct', 'ack', { at: arrives, back: !back, dur: direct - arrives });
+      }
+      after(leaves, () => line(3));
+      after(arrives - 300, () => flag('ttl', false));
+      after(arrives, () => line(4));
+      after(direct, () => { line(5); settle(); });
+      fly('direct', 'quic', { at: direct + 100 });
+      fly('direct', 'quic', { at: direct + 450, back: true });
+    },
+    off() {
+      const end = replayTime(3);
+      const toWall = (FAR_WALL * route.direct.len) / SPEED;
+      line(0);
+      relayTraffic(end);
+      candidates(() => { line(1); line(2); flag('direct-try'); });
+      for (let s = 0.07, first = true; replayTime(s) + toWall < end; s += 0.2, first = false) {
+        for (const back of [false, true]) {
+          fly('direct', 'probe', {
+            at: replayTime(s), back, to: FAR_WALL, drop: true,
+            mark: first ? [OWN_WALL, door(back)] : undefined,
+            then: first ? () => { flag('moved'); line(3); } : undefined,
+          });
+        }
+      }
+      after(end, () => { line(4); settle(); });
+    },
+  };
+
+  function reset(name) {
+    cancelAnimationFrame(raf);
+    raf = 0;
+    queue = [];
+    flights = [];
+    layer.replaceChildren();
+    run = name;
+    current = endings.find(b => b.dataset.run === name);
+    rows = [...logs.querySelector(`[data-log="${name}"]`).children];
+    logs.dataset.show = name;
+    for (const state of STATES) flag(state, false);
+    pathLabel.textContent = 'path relay';
+    said.textContent = '';
+    for (const b of endings) {
+      b.setAttribute('aria-pressed', b === current);
+      b.classList.remove('played');
+      b.style.setProperty('--p', 0);
+      showClock(b, b === current ? 0 : RUNS[b.dataset.run].last);
+    }
+    for (const log of logs.children) for (const li of log.children) li.classList.remove('on', 'typed');
+  }
+
+  function settle() {
+    const { final, path, last, said: text } = RUNS[run];
+    for (const state of STATES) flag(state, final.includes(state));
+    pathLabel.textContent = path;
+    for (const li of rows) li.classList.add('on');
+    current.classList.add('played');
+    current.style.setProperty('--p', 1);
+    showClock(current, last);
+    said.textContent = text;
+  }
+
+  function play(name) {
+    started = true;
+    reset(name);
+    if (reduced) return settle();
+    SCRIPT[name]();
+    t0 = performance.now();
+    raf = requestAnimationFrame(frame);
+  }
+
+  endings.forEach(b => b.addEventListener('click', () => play(b.dataset.run)));
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && raf) play(run); });
+
+  reset('on');
+  if (reduced) {
+    play('on');
+  } else {
+    new IntersectionObserver(([entry], observer) => {
+      if (!entry.isIntersecting) return;
+      observer.disconnect();
+      setTimeout(() => { if (!started) play('on'); }, 900);
+    }, { threshold: 0.4 }).observe(svg);
+  }
+})();
+</script>
+</body>
+</html>

@@ -12,7 +12,7 @@ Each peer keeps one TLS session to a relay. The relay forwards packets between t
 cargo install natty-relay
 ```
 
-To build a static Linux image, use the [Dockerfile](https://github.com/razvandimescu/natty/blob/main/Dockerfile) in the natty repository.
+To build the image yourself, use the target `natty-relay` of the [Dockerfile](https://github.com/razvandimescu/natty/blob/main/Dockerfile)
 
 ## Run
 
