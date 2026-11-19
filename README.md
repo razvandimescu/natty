@@ -2,6 +2,10 @@
 
 natty connects two applications behind NAT. The address of a peer is `<key>@<relay>`: its public key and a relay that both peers use. The application gets an encrypted `quinn::Connection` from quinn 0.11.
 
+[![A laptop behind a home router and a Raspberry Pi behind an office router. Each one keeps a session to one relay. A direct UDP path can join them.](docs/map.png)](https://razvandimescu.github.io/natty/)
+
+[The project page](https://razvandimescu.github.io/natty/) replays two runs between the laptop and the Raspberry Pi. The run with the [opener](#how-it-works) moves to a direct path. The run without it stays on the relay.
+
 natty has three parts:
 
 - [The library](#use-the-library) gives a Rust application a connection to a peer key.
@@ -9,8 +13,6 @@ natty has three parts:
 - [The `natty` CLI](#share-a-tcp-service) shares a TCP service with the keys that you list. The machine that shares it needs no inbound port.
 
 The application must already have the address of the peer. natty has no default relay. Each application chooses its relay. Anyone can run a relay.
-
-[An animated walk-through](https://razvandimescu.github.io/natty/) shows one connection, step by step.
 
 ## Quickstart
 
@@ -39,7 +41,7 @@ This test uses one machine and three terminals. You need a Rust toolchain and a 
 
 Result: terminal 2 prints `hello`. Terminal 3 prints the byte counts, the RTT and `path relay`. This short transfer ends before the punch completes.
 
-This test shows that the relay and the API work. It does not test NAT traversal. On one machine, a longer transfer moves to a direct path over loopback. That path does not cross a NAT. To test NAT traversal, see [Test NAT traversal](#test-nat-traversal).
+This test shows that the relay and the API work. It does not cross a NAT. To test NAT traversal, see [Test NAT traversal](#test-nat-traversal).
 
 If `listening as` does not appear, the listener cannot reach the relay. The example retries in silence. To test the relay, run `curl --cacert cert.pem https://localhost:4443/health`. The first line must be `ok`.
 
@@ -52,8 +54,7 @@ Add natty from crates.io:
 natty = "0.0.3"
 ```
 
-This code is a sketch. Errors use `?` for brevity. [examples/pipe.rs](examples/pipe.rs) is a
-complete program.
+This code is a sketch. [examples/pipe.rs](examples/pipe.rs) is a complete program.
 
 The endpoint needs `relay_tls`: an `Arc<natty::quinn::rustls::ClientConfig>` that trusts the certificate of the relay. [src/bin/natty/env.rs](src/bin/natty/env.rs) makes this value with the `webpki-roots` crate. That crate is not a dependency of the library.
 
@@ -116,9 +117,7 @@ cargo install natty --features cli
 
 Each machine keeps its key in the file that `NATTY_KEY` names. natty makes the file on first use.
 
-These steps use the test relay `relay.numa.rs`. Do not use it for a service that you depend on. It can stop or change at any time.
-
-The author of natty runs the relay for numa. It shares a traffic cap with numa users. Its operator sees the data that [What the relay sees](#what-the-relay-sees) lists. For your own relay, see [Run a relay](#run-a-relay).
+These steps use the [test relay](#run-a-relay) `relay.numa.rs`. Do not use it for a service that you depend on.
 
 1. On the machine that connects, print its public key:
    ```sh
@@ -145,15 +144,9 @@ Result: `curl http://127.0.0.1:8080/` on the first machine gets the answer of th
 
 To see the path of the connection, set `NATTY_LOG=debug`. The log shows `direct path to <key>` when the connection moves to a direct path. On the relay path, the relay caps the speed of each session. The default cap is 1 MiB/s.
 
-`natty connect` first dials the agent. It then checks the grant. If one of these steps fails, the command stops with an error:
+`natty connect` first dials the agent. It then checks the grant. If one of these steps fails, the command stops with an error. When the connection to the agent closes later, `natty connect` dials again for the next TCP connection.
 
-- The relay does not answer within 10 s: `the relay is not reachable`.
-- The agent does not answer within 10 s, for example when it is offline: `no answer within 10 s`.
-- The grants file gives your key no `web`: the error names your key.
-
-When the connection to the agent closes later, `natty connect` dials again for the next TCP connection. An agent with no relay session prints `connecting to the relay as <key>@<relay>`. It then tries again.
-
-`natty connect` gives one service a local port. For a second service at the same time, start a second `natty connect` with its own key file. Add that key to the grants file. To see the services that the agent grants to your key, run `natty list '<key>@relay.numa.rs'`. `natty help` prints the commands and the environment variables.
+For a second service at the same time, start a second `natty connect` with its own key file. Add that key to the grants file. To see the services that the agent grants to your key, run `natty list '<key>@relay.numa.rs'`. `natty help` prints the commands and the environment variables.
 
 The agent reads the grants file again every 5 s. When you remove a grant, the agent ends the open streams of that grant. A key with no grant gets the same refusal for every service name. It cannot learn which services exist. The client sends a service name, never an address.
 
@@ -163,17 +156,19 @@ The image `ghcr.io/razvandimescu/natty:v0.0.3` holds the CLI for linux/amd64. It
 
 ## Run a relay
 
-A relay needs a TLS certificate for its host name or IP address, a TCP port for sessions and a UDP port for STUN. The defaults are TCP 443 and UDP 3478. The peers need only outbound access. The relay accepts a session from any key. [What the relay sees](#what-the-relay-sees) lists the data that its operator can see.
+A relay needs a TLS certificate for its host name or IP address, a TCP port for sessions and a UDP port for STUN. The defaults are TCP 443 and UDP 3478. The peers need only outbound access. The relay accepts a session from any key. [What the relay knows](docs/design.md#what-the-relay-knows) lists the data that its operator can see.
 
 A pair of peers without a direct path sends all of its traffic through the relay. To limit the load, use `--cap`, `--total-cap` and `--per-ip`. Published measurements of other systems give punch success rates from 57% to 93% ([docs/research.md](docs/research.md#hole-punching-success-measured)). natty has no rate of its own yet.
 
 To install the relay, run `cargo install natty-relay`. The image `ghcr.io/razvandimescu/natty-relay:v0.0.3` holds the relay for linux/amd64. It takes the same flags. [relay/README.md](relay/README.md) describes the certificate setup, the health check and the flags.
 
+The author of natty runs the test relay `relay.numa.rs` for the friend-to-friend feature of [numa](https://github.com/razvandimescu/numa). It can stop or change at any time. It shares a traffic cap with numa users. Its operator sees the data that [What the relay knows](docs/design.md#what-the-relay-knows) lists.
+
 ## Test NAT traversal
 
 Use two peers on different networks and a relay that both peers can reach.
 
-For tests, you can use `relay.numa.rs` in place of your own relay. Do not use it in a released application. It can stop or change at any time. The author of natty runs it for numa. It shares a traffic cap with numa users. Its operator sees the data that [What the relay sees](#what-the-relay-sees) lists.
+For this test, you can use the [test relay](#run-a-relay) `relay.numa.rs`. Do not use it in a released application.
 
 On one peer, start a listener:
 
@@ -212,6 +207,8 @@ Each endpoint has an Ed25519 key and one TLS session to a relay.
 6. When a probe gets an answer, the QUIC connection moves to the direct path.
    The relay session stays open as a fallback.
 7. When no probe gets an answer, the relay continues to forward the packets.
+
+[An animated walk-through](https://razvandimescu.github.io/natty/how-it-works.html) shows these steps.
 
 Peers authenticate with raw Ed25519 public keys in TLS 1.3 (RFC 7250). The
 dialer accepts only the key that it dialed. The listener accepts any
