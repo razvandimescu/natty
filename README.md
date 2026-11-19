@@ -10,44 +10,7 @@ natty has three parts:
 
 The application must already have the address of the peer. natty has no default relay. Each application chooses its relay. Anyone can run a relay.
 
-[An animated walk-through](https://razvandimescu.github.io/natty/how-it-works.html) shows one connection, step by step.
-
-Status:
-
-- natty has no security review yet. The API can change in every 0.0.x release.
-- CI fuzzes the parsers of frames, STUN messages, signals, keys and tunnel requests.
-- Built: the relay, QUIC through the relay, hole punching, and the CLI with its tunnel protocol.
-- Measured ([docs/results.md](docs/results.md)):
-  - The relay path between two networks.
-  - A direct path from behind one NAT to a host without NAT.
-  - A direct path between one pair of NATs that remap on an early packet.
-- Not yet shown: direct paths over IPv6, through double NAT or carrier-grade
-  NAT, or between peers a few hops apart.
-- Runs on macOS, Linux and Windows. CI tests only Linux.
-
-## When to use natty
-
-natty connects the peers of one application through NAT. It is not a VPN. The application decides which keys can connect. No server decides for it.
-
-Use natty when:
-
-- You want to choose the relay. natty has no default service. It connects only to the relay and to peers.
-- You want few direct dependencies. The library uses quinn, tokio, rustls, ring and log.
-- You want to share a TCP service with a list of keys, from a machine with no inbound port.
-
-Use a different tool when you need:
-
-- Discovery or lookup of keys. natty never publishes keys. It never searches for keys.
-- Many transports and peer discovery in one protocol suite, for example libp2p.
-- A mesh, a VPN or an overlay network, for example Tailscale or ZeroTier. The CLI shares single TCP services, not a network.
-- Connections to browsers, for example WebRTC.
-- Access without natty on the client side, for example a public URL. Both sides of the CLI need natty and a key.
-- A tunnel for UDP services. The CLI forwards only TCP.
-- Port mapping or more than one relay for each endpoint now, for example iroh.
-- A stable API now.
-
-The author built natty for the friend-to-friend feature of
-[numa](https://github.com/razvandimescu/numa). natty has no numa dependency.
+[An animated walk-through](https://razvandimescu.github.io/natty/) shows one connection, step by step.
 
 ## Quickstart
 
@@ -271,36 +234,6 @@ compatible with DERP. [docs/design.md](docs/design.md) specifies the wire format
 - There is no declared minimum Rust version.
 - natty has no security review yet. To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
-## What the relay sees
-
-The relay sees:
-
-- The keys that are online, and their addresses.
-- When each session starts and stops.
-- Which pairs of keys exchange packets, and the byte counts.
-- The ALPN of each connection. The first QUIC packet is not confidential.
-- The local and public addresses and the probe keys of peers that punch.
-  Peers sign the candidates. They do not encrypt them.
-
-The relay does not see the QUIC payload. The relay code has no per-session log
-path. It keeps only aggregate counters. `/health` shows them.
-
-Any peer that knows `<key>@<relay>` can open a QUIC connection through the
-relay. That peer learns that the endpoint is online. A call to `Endpoint::revoke` removes the direct
-path. The revoked peer keeps the addresses that it learned.
-
-## What the network sees
-
-Anyone on the network path of a peer sees:
-
-- The relay that the peer uses.
-- The punch packets. Peers sign them. They do not encrypt them. Each packet starts with
-  `*nty`. It contains a probe key, not an endpoint key.
-
-No packet shows an endpoint key in clear text. One gap remains:
-
-- After a network change, keepalives use the old probe key until the next
-  punch. An observer on both networks can use that key to link the old and the new address of the peer.
 
 ## License
 
