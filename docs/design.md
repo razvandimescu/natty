@@ -286,6 +286,7 @@ current one IPv4.
 - Each side of a QUIC connection sends a keep-alive after 15 s of inactivity.
   An idle connection thus outlives the 30 s QUIC idle timeout, and its key is
   not forgotten.
+- Each side lets its peer have 32 bidirectional streams open at once.
 
 ## Tunnel
 
@@ -343,7 +344,11 @@ so statuses can be added without a version bump.
 - 4 connections per key with an entry in the grants, and 8 for all other keys
   together. Past that, the host closes the connection with code 2. Code 1
   closes a connection whose peer presented no key.
-- 32 open streams per connection. Further streams wait.
+- 32 open streams per connection. A further stream waits to open until
+  others end.
+- The dialer gives up 15 s after its stream opens if the status has not come
+  or the listing has not ended. The host gives up after 10 s on a status or a
+  listing that the dialer does not take.
 - A stream ends after 600 s with no byte in either direction, or when one
   write is stuck that long.
 

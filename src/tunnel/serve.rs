@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use log::{debug, info, warn};
 use quinn::{Connection, RecvStream, SendStream};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{watch, OwnedSemaphorePermit, Semaphore};
 use tokio::time::timeout;
@@ -20,7 +20,6 @@ const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_CONNECTIONS: usize = 64;
 const PEER_CONNECTIONS: usize = 4;
 const STRANGER_CONNECTIONS: usize = 8;
-const STREAMS_PER_CONNECTION: usize = 32;
 
 /// Serves the services of the policy until the endpoint closes. The endpoint
 /// must be bound with [`ALPN`](super::ALPN). A new value on the channel
@@ -87,17 +86,12 @@ async fn follow(endpoint: &Endpoint, mut policy: watch::Receiver<Policy>) {
 }
 
 async fn serve_peer(conn: Connection, peer: PublicKey, policy: watch::Receiver<Policy>) {
-    let streams = Arc::new(Semaphore::new(STREAMS_PER_CONNECTION));
-    while let Ok(permit) = Arc::clone(&streams).acquire_owned().await {
-        let Ok((send, recv)) = conn.accept_bi().await else {
-            return;
-        };
+    while let Ok((send, recv)) = conn.accept_bi().await {
         let policy = policy.clone();
         tokio::spawn(async move {
             if let Err(e) = handle_stream(policy, peer, send, recv).await {
                 debug!("tunnel: {peer}: {e}");
             }
-            drop(permit);
         });
     }
 }
@@ -141,30 +135,28 @@ async fn handle_stream(
     let service = read_request(&mut recv).await?;
     if service == LIST {
         let names = policy.borrow().listing(&peer).join("\n");
-        send.write_u8(Status::Ok.byte()).await?;
-        send.write_all(names.as_bytes()).await?;
-        return send.finish().map_err(io::Error::other);
+        return reply(&mut send, Status::Ok, names.as_bytes()).await;
     }
     let resolved = policy.borrow().resolve(&peer, &service).map(str::to_owned);
     let target = match resolved {
         Ok(target) => target,
         Err(status) => {
             info!("{peer} -> {service}: {status}");
-            return reply(&mut send, status).await;
+            return reply(&mut send, status, &[]).await;
         }
     };
     let tcp = match timeout(UPSTREAM_TIMEOUT, TcpStream::connect(&target)).await {
         Ok(Ok(tcp)) => tcp,
         Ok(Err(e)) => {
             warn!("{peer} -> {service} ({target}): {e}");
-            return reply(&mut send, Status::Unavailable).await;
+            return reply(&mut send, Status::Unavailable, &[]).await;
         }
         Err(_) => {
             warn!("{peer} -> {service} ({target}): no answer");
-            return reply(&mut send, Status::Unavailable).await;
+            return reply(&mut send, Status::Unavailable, &[]).await;
         }
     };
-    send.write_u8(Status::Ok.byte()).await?;
+    write(&mut send, &[Status::Ok.byte()]).await?;
     info!("{peer} -> {service} ({target})");
     tokio::select! {
         piped = pipe(send, recv, tcp) => piped,
@@ -175,9 +167,15 @@ async fn handle_stream(
     }
 }
 
-async fn reply(send: &mut SendStream, status: Status) -> io::Result<()> {
-    send.write_u8(status.byte()).await?;
+async fn reply(send: &mut SendStream, status: Status, body: &[u8]) -> io::Result<()> {
+    write(send, &[&[status.byte()], body].concat()).await?;
     send.finish().map_err(io::Error::other)
+}
+
+async fn write(to: &mut (impl AsyncWrite + Unpin), bytes: &[u8]) -> io::Result<()> {
+    timeout(REQUEST_TIMEOUT, to.write_all(bytes))
+        .await
+        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?
 }
 
 /// Resolves when a new policy no longer grants `service` to `peer`.
@@ -227,6 +225,17 @@ mod tests {
         let err = read
             .await
             .expect("the request read never gave up")
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[tokio::test]
+    async fn a_reply_the_dialer_does_not_take_times_out() {
+        let (mut host, _dialer) = tokio::io::duplex(1);
+        let wrote = timeout(Duration::from_secs(5), write(&mut host, b"\0web"));
+        let err = wrote
+            .await
+            .expect("the reply write never gave up")
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::TimedOut);
     }

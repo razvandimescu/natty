@@ -9,10 +9,12 @@ mod serve;
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
+use std::future::Future;
 use std::time::Duration;
 
 use quinn::{Connection, RecvStream, SendStream};
 use tokio::io::AsyncReadExt;
+use tokio::time::timeout;
 
 pub use pipe::pipe;
 #[cfg(fuzzing)]
@@ -25,6 +27,7 @@ use proto::{parse_listing, LIST, MAX_LISTING_LEN};
 
 const RELAY_WAIT: Duration = Duration::from_secs(10);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(10);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Who may open what on a host. Service names are in lower case.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -99,40 +102,58 @@ fn lost(e: impl fmt::Display) -> OpenError {
 pub async fn dial(endpoint: &Endpoint, peer: PublicKey) -> Result<Connection, OpenError> {
     let mut relay = endpoint.relay_state();
     if !matches!(
-        tokio::time::timeout(RELAY_WAIT, relay.wait_for(Option::is_some)).await,
+        timeout(RELAY_WAIT, relay.wait_for(Option::is_some)).await,
         Ok(Ok(_))
     ) {
         return Err(OpenError::RelayDown);
     }
-    match tokio::time::timeout(DIAL_TIMEOUT, endpoint.connect(peer)).await {
-        Ok(result) => result.map_err(lost),
-        Err(_) => Err(OpenError::Unreachable(format!(
-            "no answer within {} s",
-            DIAL_TIMEOUT.as_secs()
-        ))),
-    }
+    within(DIAL_TIMEOUT, async {
+        endpoint.connect(peer).await.map_err(lost)
+    })
+    .await
 }
 
 /// Opens a stream to `service` on the host. After `Ok`, the stream carries
 /// the bytes of the service.
 pub async fn open(conn: &Connection, service: &str) -> Result<(SendStream, RecvStream), OpenError> {
-    request(conn, service).await
+    let (mut send, mut recv) = conn.open_bi().await.map_err(lost)?;
+    within(REQUEST_TIMEOUT, request(&mut send, &mut recv, service)).await?;
+    Ok((send, recv))
 }
 
 /// The services the host grants to this key.
 pub async fn list(conn: &Connection) -> Result<Vec<String>, OpenError> {
-    let (_send, mut recv) = request(conn, LIST).await?;
-    let body = recv.read_to_end(MAX_LISTING_LEN).await.map_err(lost)?;
+    let (mut send, mut recv) = conn.open_bi().await.map_err(lost)?;
+    let body = within(REQUEST_TIMEOUT, async {
+        request(&mut send, &mut recv, LIST).await?;
+        recv.read_to_end(MAX_LISTING_LEN).await.map_err(lost)
+    })
+    .await?;
     Ok(parse_listing(&body))
 }
 
-async fn request(conn: &Connection, line: &str) -> Result<(SendStream, RecvStream), OpenError> {
-    let (mut send, mut recv) = conn.open_bi().await.map_err(lost)?;
+async fn within<T>(
+    limit: Duration,
+    work: impl Future<Output = Result<T, OpenError>>,
+) -> Result<T, OpenError> {
+    timeout(limit, work).await.unwrap_or_else(|_| {
+        Err(OpenError::Unreachable(format!(
+            "no answer within {} s",
+            limit.as_secs()
+        )))
+    })
+}
+
+async fn request(
+    send: &mut SendStream,
+    recv: &mut RecvStream,
+    line: &str,
+) -> Result<(), OpenError> {
     send.write_all(format!("{line}\n").as_bytes())
         .await
         .map_err(lost)?;
     match Status::from_byte(recv.read_u8().await.map_err(lost)?) {
-        Status::Ok => Ok((send, recv)),
+        Status::Ok => Ok(()),
         status => Err(OpenError::Refused(status)),
     }
 }

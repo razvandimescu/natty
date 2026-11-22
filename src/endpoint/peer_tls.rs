@@ -103,6 +103,7 @@ impl PeerTls {
 fn transport() -> Arc<quinn::TransportConfig> {
     let mut transport = quinn::TransportConfig::default();
     transport.keep_alive_interval(Some(QUIC_KEEPALIVE));
+    transport.max_concurrent_bidi_streams(32u32.into());
     Arc::new(transport)
 }
 

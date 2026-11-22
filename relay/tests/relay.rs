@@ -607,3 +607,53 @@ async fn tunnel_ends_an_open_stream_when_its_grant_goes() {
         Err(OpenError::Refused(Status::Denied))
     ));
 }
+
+#[tokio::test]
+async fn tunnel_gives_up_on_a_host_that_never_answers() {
+    let h = start(0, 16).await;
+    let host = bound(&h, SecretKey::generate(), tunnel::ALPN).await;
+    let dialer = bound(&h, SecretKey::generate(), tunnel::ALPN).await;
+    let (conn, accepted) = connected(&dialer, &host).await;
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((mut send, mut recv)) = accepted.accept_bi().await {
+            if recv.read_u8().await.unwrap() == b'?' {
+                send.write_all(&[0]).await.unwrap();
+            }
+            held.push((send, recv));
+        }
+    });
+    let answers = async { tokio::join!(tunnel::open(&conn, "echo"), tunnel::list(&conn)) };
+    let (opened, listed) = tokio::time::timeout(Duration::from_secs(25), answers)
+        .await
+        .expect("the dialer never gave up");
+    assert!(matches!(opened, Err(OpenError::Unreachable(_))));
+    assert!(matches!(listed, Err(OpenError::Unreachable(_))));
+}
+
+#[tokio::test]
+async fn tunnel_streams_past_the_limit_wait_to_open() {
+    let h = start(0, 16).await;
+    let upstreams = HashMap::from([("echo".to_string(), echo_upstream().await)]);
+    let (tx, dialer, conn) = tunnel_pair(&h, Policy::default()).await;
+    tx.send_replace(Policy {
+        grants: grants(dialer.public_key(), &["echo"]),
+        upstreams,
+    });
+    let mut open = Vec::new();
+    for _ in 0..32 {
+        open.push(tunnel::open(&conn, "echo").await.unwrap());
+    }
+    let mut past_the_limit = Box::pin(tunnel::open(&conn, "echo"));
+    let waited = tokio::time::timeout(Duration::from_secs(16), &mut past_the_limit).await;
+    assert!(waited.is_err(), "a 33rd stream did not wait to open");
+
+    for (mut send, mut recv) in open {
+        send.finish().unwrap();
+        recv.read_to_end(1024).await.unwrap();
+    }
+    tokio::time::timeout(Duration::from_secs(10), past_the_limit)
+        .await
+        .expect("no stream opened after the others ended")
+        .unwrap();
+}
