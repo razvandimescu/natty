@@ -94,7 +94,9 @@ impl fmt::Display for OpenError {
 impl std::error::Error for OpenError {}
 
 fn lost(e: impl fmt::Display) -> OpenError {
-    OpenError::Unreachable(e.to_string())
+    let text = e.to_string();
+    let printable = text.chars().filter(|c| *c == ' ' || c.is_ascii_graphic());
+    OpenError::Unreachable(printable.collect())
 }
 
 /// Dials `peer` once the relay session of `endpoint` is up. The endpoint
@@ -183,6 +185,15 @@ mod tests {
         assert_eq!(policy.resolve(&peer, "db"), Err(Status::Denied));
         assert_eq!(policy.resolve(&stranger, "web"), Err(Status::Denied));
         assert_eq!(policy.resolve(&stranger, "nope"), Err(Status::Denied));
+    }
+
+    #[test]
+    fn a_lost_connection_reads_as_printable_text() {
+        let closed = "closed by peer: \x1b]52;c;aGk=\x07<b>busy</b>\r\n (code 9)";
+        let printable = "closed by peer: ]52;c;aGk=<b>busy</b> (code 9)";
+        assert_eq!(lost(closed).to_string(), printable);
+        let own = "closed by peer: busy (code 2)";
+        assert_eq!(lost(own).to_string(), own);
     }
 
     #[test]
