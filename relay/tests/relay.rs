@@ -418,13 +418,13 @@ async fn endpoints_punch_a_direct_path_that_carries_the_data() {
     let payload = vec![7u8; 1 << 20];
     let ((), received) = tokio::join!(
         async {
-            let mut send = conn.open_uni().await.unwrap();
+            let (mut send, _recv) = conn.open_bi().await.unwrap();
             send.write_all(&payload).await.unwrap();
             send.finish().unwrap();
             send.stopped().await.unwrap();
         },
         async {
-            let mut recv = accepted.accept_uni().await.unwrap();
+            let (_send, mut recv) = accepted.accept_bi().await.unwrap();
             recv.read_to_end(2 << 20).await.unwrap()
         }
     );
@@ -454,13 +454,13 @@ async fn unallowed_dialer_is_served_through_the_relay_only() {
     let payload = vec![7u8; 256 * 1024];
     let ((), received) = tokio::join!(
         async {
-            let mut send = conn.open_uni().await.unwrap();
+            let (mut send, _recv) = conn.open_bi().await.unwrap();
             send.write_all(&payload).await.unwrap();
             send.finish().unwrap();
             send.stopped().await.unwrap();
         },
         async {
-            let mut recv = accepted.accept_uni().await.unwrap();
+            let (_send, mut recv) = accepted.accept_bi().await.unwrap();
             recv.read_to_end(1 << 20).await.unwrap()
         }
     );
@@ -648,6 +648,8 @@ async fn tunnel_streams_past_the_limit_wait_to_open() {
     for _ in 0..32 {
         open.push(tunnel::open(&conn, "echo").await.unwrap());
     }
+    let one_way = tokio::time::timeout(Duration::from_secs(1), conn.open_uni()).await;
+    assert!(one_way.is_err(), "a unidirectional stream opened");
     let mut past_the_limit = Box::pin(tunnel::open(&conn, "echo"));
     let waited = tokio::time::timeout(Duration::from_secs(16), &mut past_the_limit).await;
     assert!(waited.is_err(), "a 33rd stream did not wait to open");

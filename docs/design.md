@@ -286,7 +286,8 @@ current one IPv4.
 - Each side of a QUIC connection sends a keep-alive after 15 s of inactivity.
   An idle connection thus outlives the 30 s QUIC idle timeout, and its key is
   not forgotten.
-- Each side lets its peer have 32 bidirectional streams open at once.
+- Each side lets its peer have 32 bidirectional streams open at once, and no
+  unidirectional ones, which nothing accepts.
 
 ## Tunnel
 
