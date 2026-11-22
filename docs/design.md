@@ -332,7 +332,9 @@ so statuses can be added without a version bump.
   looks the service up, so a key without the grant gets DENIED for every name
   and learns nothing about which services exist. A listing holds only granted
   services that exist.
-- When the grants change, the host ends each open stream whose grant is gone.
+- When the grants or the services change, the host ends each open stream
+  whose grant is gone or whose service now has another upstream or none, and
+  closes the connections of each key whose entry is gone.
 - A key with an entry in the grants is allowed to traverse (see Punch), and
   the allow is revoked when the entry goes. Every other key is served through
   the relay only.
@@ -343,7 +345,8 @@ so statuses can be added without a version bump.
   that, the host refuses the handshake.
 - 4 connections per key with an entry in the grants, and 8 for all other keys
   together. Past that, the host closes the connection with code 2. Code 1
-  closes a connection whose peer presented no key.
+  closes a connection whose peer presented no key, and code 3 one whose key
+  lost its entry in the grants.
 - 32 open streams per connection. A further stream waits to open until
   others end.
 - The dialer gives up 15 s after its stream opens if the status has not come

@@ -521,13 +521,17 @@ fn grants(peer: PublicKey, services: &[&str]) -> HashMap<PublicKey, BTreeSet<Str
     HashMap::from([(peer, services.iter().map(|s| s.to_string()).collect())])
 }
 
-/// A host that serves `policy`, and a dialer connected to it.
-async fn tunnel_pair(h: &Harness, policy: Policy) -> (watch::Sender<Policy>, Endpoint, Connection) {
+/// A host that serves the policy made for the dialer's key, and the dialer
+/// connected to it.
+async fn tunnel_pair(
+    h: &Harness,
+    policy: impl FnOnce(PublicKey) -> Policy,
+) -> (watch::Sender<Policy>, Endpoint, Connection) {
+    let dialer = bound(h, SecretKey::generate(), tunnel::ALPN).await;
     let host = bound(h, SecretKey::generate(), tunnel::ALPN).await;
     let host_key = host.public_key();
-    let (tx, rx) = watch::channel(policy);
+    let (tx, rx) = watch::channel(policy(dialer.public_key()));
     tokio::spawn(async move { tunnel::serve(&host, rx).await });
-    let dialer = bound(h, SecretKey::generate(), tunnel::ALPN).await;
     let conn = tunnel::dial(&dialer, host_key).await.unwrap();
     (tx, dialer, conn)
 }
@@ -543,7 +547,7 @@ async fn tunnel_opens_granted_services_and_refuses_the_rest() {
         ("down".to_string(), down),
         ("private".to_string(), echo_upstream().await),
     ]);
-    let (tx, dialer, conn) = tunnel_pair(&h, Policy::default()).await;
+    let (tx, dialer, conn) = tunnel_pair(&h, |_| Policy::default()).await;
     assert!(matches!(
         tunnel::open(&conn, "echo").await,
         Err(OpenError::Refused(Status::Denied))
@@ -581,7 +585,7 @@ async fn tunnel_opens_granted_services_and_refuses_the_rest() {
 async fn tunnel_ends_an_open_stream_when_its_grant_goes() {
     let h = start(0, 16).await;
     let upstreams = HashMap::from([("echo".to_string(), echo_upstream().await)]);
-    let (tx, dialer, conn) = tunnel_pair(&h, Policy::default()).await;
+    let (tx, dialer, conn) = tunnel_pair(&h, |_| Policy::default()).await;
     let granted = |services: &[&str]| Policy {
         grants: grants(dialer.public_key(), services),
         upstreams: upstreams.clone(),
@@ -635,7 +639,7 @@ async fn tunnel_gives_up_on_a_host_that_never_answers() {
 async fn tunnel_streams_past_the_limit_wait_to_open() {
     let h = start(0, 16).await;
     let upstreams = HashMap::from([("echo".to_string(), echo_upstream().await)]);
-    let (tx, dialer, conn) = tunnel_pair(&h, Policy::default()).await;
+    let (tx, dialer, conn) = tunnel_pair(&h, |_| Policy::default()).await;
     tx.send_replace(Policy {
         grants: grants(dialer.public_key(), &["echo"]),
         upstreams,
@@ -656,4 +660,31 @@ async fn tunnel_streams_past_the_limit_wait_to_open() {
         .await
         .expect("no stream opened after the others ended")
         .unwrap();
+}
+
+#[tokio::test]
+async fn tunnel_closes_the_connections_of_a_key_that_goes() {
+    let h = start(0, 16).await;
+    let known = |dialer| Policy {
+        grants: grants(dialer, &[]),
+        ..Policy::default()
+    };
+    let (tx, _dialer, conn) = tunnel_pair(&h, known).await;
+    let stranger = bound(&h, SecretKey::generate(), tunnel::ALPN).await;
+    let host_key = natty::peer_key(&conn).unwrap();
+    let stranger_conn = tunnel::dial(&stranger, host_key).await.unwrap();
+    for conn in [&conn, &stranger_conn] {
+        assert!(tunnel::list(conn).await.unwrap().is_empty());
+    }
+
+    tx.send_replace(Policy::default());
+    let closed = tokio::time::timeout(Duration::from_secs(5), conn.closed())
+        .await
+        .expect("the key that went kept its connection");
+    assert!(matches!(
+        closed,
+        natty::quinn::ConnectionError::ApplicationClosed(close)
+            if close.error_code == natty::quinn::VarInt::from_u32(3)
+    ));
+    assert!(tunnel::list(&stranger_conn).await.unwrap().is_empty());
 }

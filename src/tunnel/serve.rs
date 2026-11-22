@@ -24,7 +24,8 @@ const STRANGER_CONNECTIONS: usize = 8;
 /// Serves the services of the policy until the endpoint closes. The endpoint
 /// must be bound with [`ALPN`](super::ALPN). A new value on the channel
 /// changes access at once: a key is allowed a direct path only while the
-/// grants hold an entry for it, and an open stream ends when its grant is gone.
+/// grants hold an entry for it, and an open stream ends when its grant goes or
+/// its service moves.
 pub async fn serve(endpoint: &Endpoint, policy: watch::Receiver<Policy>) {
     tokio::select! {
         () = accept(endpoint, &policy) => {}
@@ -62,7 +63,12 @@ async fn accept(endpoint: &Endpoint, policy: &watch::Receiver<Policy>) {
                 return;
             };
             let _held = (permit, slot);
-            serve_peer(conn, peer, policy).await;
+            tokio::select! {
+                () = serve_peer(&conn, peer, policy.clone()) => {}
+                () = until(policy, |p| !p.knows(&peer)), if known => {
+                    conn.close(3u32.into(), b"removed");
+                }
+            }
         });
     }
 }
@@ -85,7 +91,7 @@ async fn follow(endpoint: &Endpoint, mut policy: watch::Receiver<Policy>) {
     }
 }
 
-async fn serve_peer(conn: Connection, peer: PublicKey, policy: watch::Receiver<Policy>) {
+async fn serve_peer(conn: &Connection, peer: PublicKey, policy: watch::Receiver<Policy>) {
     while let Ok((send, recv)) = conn.accept_bi().await {
         let policy = policy.clone();
         tokio::spawn(async move {
@@ -160,8 +166,8 @@ async fn handle_stream(
     info!("{peer} -> {service} ({target})");
     tokio::select! {
         piped = pipe(send, recv, tcp) => piped,
-        () = revoked(policy, peer, &service) => {
-            info!("{peer} -> {service}: closed, the grant is gone");
+        () = revoked(policy, peer, &service, &target) => {
+            info!("{peer} -> {service}: closed, the grant or the service changed");
             Ok(())
         }
     }
@@ -178,10 +184,14 @@ async fn write(to: &mut (impl AsyncWrite + Unpin), bytes: &[u8]) -> io::Result<(
         .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?
 }
 
-/// Resolves when a new policy no longer grants `service` to `peer`.
-async fn revoked(mut policy: watch::Receiver<Policy>, peer: PublicKey, service: &str) {
+/// Resolves when a new policy no longer sends `service` of `peer` to `target`.
+async fn revoked(policy: watch::Receiver<Policy>, peer: PublicKey, service: &str, target: &str) {
+    until(policy, |p| p.resolve(&peer, service) != Ok(target)).await
+}
+
+async fn until(mut policy: watch::Receiver<Policy>, gone: impl Fn(&Policy) -> bool) {
     while policy.changed().await.is_ok() {
-        if !policy.borrow().permits(&peer, service) {
+        if gone(&policy.borrow()) {
             return;
         }
     }
@@ -276,9 +286,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_stream_is_revoked_only_when_its_grant_goes() {
+    async fn a_stream_ends_when_its_grant_or_its_upstream_changes() {
         let peer = SecretKey::generate().public();
-        let grant = |services: &[&str]| Policy {
+        let policy = |services: &[&str], web: Option<&str>| Policy {
             grants: HashMap::from([(
                 peer,
                 services
@@ -286,19 +296,34 @@ mod tests {
                     .map(|s| s.to_string())
                     .collect::<BTreeSet<_>>(),
             )]),
-            ..Policy::default()
+            upstreams: web
+                .map(|to| ("web".to_string(), to.to_string()))
+                .into_iter()
+                .collect(),
         };
-        let (tx, rx) = watch::channel(grant(&["web", "db"]));
-        let mut gone = tokio::spawn(revoked(rx, peer, "web"));
-
-        tx.send_replace(grant(&["web"]));
-        let still_open = timeout(Duration::from_millis(100), &mut gone).await;
-        assert!(still_open.is_err(), "another grant went, not this one");
-
-        tx.send_replace(grant(&[]));
-        timeout(Duration::from_secs(5), gone)
-            .await
-            .expect("the removed grant never ended the stream")
-            .unwrap();
+        for (what, change, ends) in [
+            (
+                "another grant went",
+                policy(&["web"], Some("127.0.0.1:80")),
+                false,
+            ),
+            (
+                "the grant went",
+                policy(&["db"], Some("127.0.0.1:80")),
+                true,
+            ),
+            (
+                "the service moved",
+                policy(&["web", "db"], Some("127.0.0.1:81")),
+                true,
+            ),
+            ("the service went", policy(&["web", "db"], None), true),
+        ] {
+            let (tx, rx) = watch::channel(policy(&["web", "db"], Some("127.0.0.1:80")));
+            let gone = tokio::spawn(revoked(rx, peer, "web", "127.0.0.1:80"));
+            tx.send_replace(change);
+            let ended = timeout(Duration::from_millis(200), gone).await.is_ok();
+            assert_eq!(ended, ends, "{what}");
+        }
     }
 }
