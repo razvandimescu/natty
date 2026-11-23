@@ -1,0 +1,54 @@
+name: homebrew
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+    secrets:
+      HOMEBREW_TAP_GITHUB_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'The release tag, e.g. v0.0.4'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fetch the checksums
+        env:
+          TAG: ${{ inputs.version }}
+        run: |
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/v${TAG#v}"
+          for asset in macos-aarch64 macos-x86_64 linux-aarch64 linux-x86_64; do
+            sha=$(curl -fsSL "$base/natty-$asset.tar.gz.sha256" | cut -d ' ' -f 1)
+            echo "SHA_$(echo "$asset" | tr 'a-z-' 'A-Z_')=$sha" >> "$GITHUB_ENV"
+          done
+
+      - name: Push the formula
+        env:
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          git clone "https://x-access-token:$HOMEBREW_TAP_GITHUB_TOKEN@github.com/razvandimescu/homebrew-tap.git" tap
+          sh scripts/homebrew-formula.sh > tap/natty.rb
+          cd tap
+          git add natty.rb
+          if git diff --cached --quiet; then
+            echo "natty.rb is already at v$VERSION"
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "chore: bump natty to v$VERSION"
+          git push origin main
