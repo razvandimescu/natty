@@ -289,6 +289,7 @@ async fn unknown_path_is_not_upgraded() {
     let h = start(0, 16).await;
     let out = get(&h, "/derp").await;
     assert!(out.starts_with("HTTP/1.1 404 "), "{out}");
+    assert!(!out.contains("natty"), "{out}");
 }
 
 #[tokio::test]

@@ -176,7 +176,7 @@ impl Drop for ConnGuard {
 async fn handle_conn(state: Arc<State>, tcp: TcpStream, addr: SocketAddr) {
     let _ = tcp.set_nodelay(true);
     // Boxed so the handshake's state is freed before the long-lived session.
-    let handshake = Box::pin(handshake(&state, tcp));
+    let handshake = Box::pin(handshake(&state, tcp, addr.ip()));
     if let Ok(Ok(Some((stream, key)))) = timeout(HANDSHAKE_TIMEOUT, handshake).await {
         run_session(state, stream, key, addr).await;
     }
@@ -185,21 +185,18 @@ async fn handle_conn(state: Arc<State>, tcp: TcpStream, addr: SocketAddr) {
 async fn handshake(
     state: &State,
     tcp: TcpStream,
+    client: IpAddr,
 ) -> io::Result<Option<(TlsStream<TcpStream>, PublicKey)>> {
     let mut stream = state.acceptor.accept(tcp).await?;
     let head = wire::read_http_head(&mut stream).await?;
     let request_line = head.lines().next().unwrap_or_default();
 
     if request_line == "GET /health HTTP/1.1" {
-        respond(&mut stream, "200 OK", &state.health()).await?;
+        respond(&mut stream, "200 OK", &state.health(client)).await?;
         return Ok(None);
     }
     if request_line != "GET /natty HTTP/1.1" || !upgrade_requested(&head) {
-        let hint = format!(
-            "natty relay: GET /natty with Upgrade: {}, or GET /health\n",
-            wire::UPGRADE
-        );
-        respond(&mut stream, "404 Not Found", &hint).await?;
+        respond(&mut stream, "404 Not Found", "").await?;
         return Ok(None);
     }
 
@@ -339,7 +336,10 @@ impl State {
         }
     }
 
-    fn health(&self) -> String {
+    fn health(&self, client: IpAddr) -> String {
+        if !client.is_loopback() {
+            return "ok\n".into();
+        }
         let s = &self.stats;
         let mut out = format!(
             "ok\nuptime_secs {}\nsessions {}\n",
@@ -359,5 +359,33 @@ impl State {
             let _ = writeln!(out, "{name} {}", counter.load(Ordering::Relaxed));
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_rustls::rustls::crypto::ring;
+    use tokio_rustls::rustls::server::ResolvesServerCertUsingSni;
+
+    #[test]
+    fn health_shows_counters_only_to_loopback() {
+        let tls = ServerConfig::builder_with_provider(Arc::new(ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_cert_resolver(Arc::new(ResolvesServerCertUsingSni::new()));
+        let relay = Relay::new(Config {
+            tls: Arc::new(tls),
+            cap: 0,
+            total_cap: 0,
+            max_conns_per_ip: 1,
+            stun_port: 0,
+        });
+        assert_eq!(relay.state.health("192.0.2.1".parse().unwrap()), "ok\n");
+        assert!(relay
+            .state
+            .health("::1".parse().unwrap())
+            .contains("\nsessions 0\n"));
     }
 }
