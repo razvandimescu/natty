@@ -419,13 +419,13 @@ async fn endpoints_punch_a_direct_path_that_carries_the_data() {
     let payload = vec![7u8; 1 << 20];
     let ((), received) = tokio::join!(
         async {
-            let mut send = conn.open_uni().await.unwrap();
+            let (mut send, _recv) = conn.open_bi().await.unwrap();
             send.write_all(&payload).await.unwrap();
             send.finish().unwrap();
             send.stopped().await.unwrap();
         },
         async {
-            let mut recv = accepted.accept_uni().await.unwrap();
+            let (_send, mut recv) = accepted.accept_bi().await.unwrap();
             recv.read_to_end(2 << 20).await.unwrap()
         }
     );
@@ -455,13 +455,13 @@ async fn unallowed_dialer_is_served_through_the_relay_only() {
     let payload = vec![7u8; 256 * 1024];
     let ((), received) = tokio::join!(
         async {
-            let mut send = conn.open_uni().await.unwrap();
+            let (mut send, _recv) = conn.open_bi().await.unwrap();
             send.write_all(&payload).await.unwrap();
             send.finish().unwrap();
             send.stopped().await.unwrap();
         },
         async {
-            let mut recv = accepted.accept_uni().await.unwrap();
+            let (_send, mut recv) = accepted.accept_bi().await.unwrap();
             recv.read_to_end(1 << 20).await.unwrap()
         }
     );
@@ -522,13 +522,17 @@ fn grants(peer: PublicKey, services: &[&str]) -> HashMap<PublicKey, BTreeSet<Str
     HashMap::from([(peer, services.iter().map(|s| s.to_string()).collect())])
 }
 
-/// A host that serves `policy`, and a dialer connected to it.
-async fn tunnel_pair(h: &Harness, policy: Policy) -> (watch::Sender<Policy>, Endpoint, Connection) {
+/// A host that serves the policy made for the dialer's key, and the dialer
+/// connected to it.
+async fn tunnel_pair(
+    h: &Harness,
+    policy: impl FnOnce(PublicKey) -> Policy,
+) -> (watch::Sender<Policy>, Endpoint, Connection) {
+    let dialer = bound(h, SecretKey::generate(), tunnel::ALPN).await;
     let host = bound(h, SecretKey::generate(), tunnel::ALPN).await;
     let host_key = host.public_key();
-    let (tx, rx) = watch::channel(policy);
+    let (tx, rx) = watch::channel(policy(dialer.public_key()));
     tokio::spawn(async move { tunnel::serve(&host, rx).await });
-    let dialer = bound(h, SecretKey::generate(), tunnel::ALPN).await;
     let conn = tunnel::dial(&dialer, host_key).await.unwrap();
     (tx, dialer, conn)
 }
@@ -544,7 +548,7 @@ async fn tunnel_opens_granted_services_and_refuses_the_rest() {
         ("down".to_string(), down),
         ("private".to_string(), echo_upstream().await),
     ]);
-    let (tx, dialer, conn) = tunnel_pair(&h, Policy::default()).await;
+    let (tx, dialer, conn) = tunnel_pair(&h, |_| Policy::default()).await;
     assert!(matches!(
         tunnel::open(&conn, "echo").await,
         Err(OpenError::Refused(Status::Denied))
@@ -582,7 +586,7 @@ async fn tunnel_opens_granted_services_and_refuses_the_rest() {
 async fn tunnel_ends_an_open_stream_when_its_grant_goes() {
     let h = start(0, 16).await;
     let upstreams = HashMap::from([("echo".to_string(), echo_upstream().await)]);
-    let (tx, dialer, conn) = tunnel_pair(&h, Policy::default()).await;
+    let (tx, dialer, conn) = tunnel_pair(&h, |_| Policy::default()).await;
     let granted = |services: &[&str]| Policy {
         grants: grants(dialer.public_key(), services),
         upstreams: upstreams.clone(),
@@ -607,4 +611,83 @@ async fn tunnel_ends_an_open_stream_when_its_grant_goes() {
         tunnel::open(&conn, "echo").await,
         Err(OpenError::Refused(Status::Denied))
     ));
+}
+
+#[tokio::test]
+async fn tunnel_gives_up_on_a_host_that_never_answers() {
+    let h = start(0, 16).await;
+    let host = bound(&h, SecretKey::generate(), tunnel::ALPN).await;
+    let dialer = bound(&h, SecretKey::generate(), tunnel::ALPN).await;
+    let (conn, accepted) = connected(&dialer, &host).await;
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((mut send, mut recv)) = accepted.accept_bi().await {
+            if recv.read_u8().await.unwrap() == b'?' {
+                send.write_all(&[0]).await.unwrap();
+            }
+            held.push((send, recv));
+        }
+    });
+    let answers = async { tokio::join!(tunnel::open(&conn, "echo"), tunnel::list(&conn)) };
+    let (opened, listed) = tokio::time::timeout(Duration::from_secs(25), answers)
+        .await
+        .expect("the dialer never gave up");
+    assert!(matches!(opened, Err(OpenError::Unreachable(_))));
+    assert!(matches!(listed, Err(OpenError::Unreachable(_))));
+}
+
+#[tokio::test]
+async fn tunnel_streams_past_the_limit_wait_to_open() {
+    let h = start(0, 16).await;
+    let upstreams = HashMap::from([("echo".to_string(), echo_upstream().await)]);
+    let (tx, dialer, conn) = tunnel_pair(&h, |_| Policy::default()).await;
+    tx.send_replace(Policy {
+        grants: grants(dialer.public_key(), &["echo"]),
+        upstreams,
+    });
+    let mut open = Vec::new();
+    for _ in 0..32 {
+        open.push(tunnel::open(&conn, "echo").await.unwrap());
+    }
+    let one_way = tokio::time::timeout(Duration::from_secs(1), conn.open_uni()).await;
+    assert!(one_way.is_err(), "a unidirectional stream opened");
+    let mut past_the_limit = Box::pin(tunnel::open(&conn, "echo"));
+    let waited = tokio::time::timeout(Duration::from_secs(16), &mut past_the_limit).await;
+    assert!(waited.is_err(), "a 33rd stream did not wait to open");
+
+    for (mut send, mut recv) in open {
+        send.finish().unwrap();
+        recv.read_to_end(1024).await.unwrap();
+    }
+    tokio::time::timeout(Duration::from_secs(10), past_the_limit)
+        .await
+        .expect("no stream opened after the others ended")
+        .unwrap();
+}
+
+#[tokio::test]
+async fn tunnel_closes_the_connections_of_a_key_that_goes() {
+    let h = start(0, 16).await;
+    let known = |dialer| Policy {
+        grants: grants(dialer, &[]),
+        ..Policy::default()
+    };
+    let (tx, _dialer, conn) = tunnel_pair(&h, known).await;
+    let stranger = bound(&h, SecretKey::generate(), tunnel::ALPN).await;
+    let host_key = natty::peer_key(&conn).unwrap();
+    let stranger_conn = tunnel::dial(&stranger, host_key).await.unwrap();
+    for conn in [&conn, &stranger_conn] {
+        assert!(tunnel::list(conn).await.unwrap().is_empty());
+    }
+
+    tx.send_replace(Policy::default());
+    let closed = tokio::time::timeout(Duration::from_secs(5), conn.closed())
+        .await
+        .expect("the key that went kept its connection");
+    assert!(matches!(
+        closed,
+        natty::quinn::ConnectionError::ApplicationClosed(close)
+            if close.error_code == natty::quinn::VarInt::from_u32(3)
+    ));
+    assert!(tunnel::list(&stranger_conn).await.unwrap().is_empty());
 }
