@@ -129,6 +129,22 @@ The router at the author's desk answered none of NAT-PMP, PCP, or UPnP SSDP.
   user base carries modest request rates, so a natty relay for a comparable
   population would hold tens to low hundreds of standing sessions.
 
+## Wire decisions
+
+The reasons for the security rules in [design.md](design.md).
+
+- Relay auth signs the TLS exporter of the session. A relay cannot replay the proof of a client to another relay. The exporter is unique for each session. The relay needs no challenge of its own. The context string keeps this signature apart from other signatures by the same key.
+- Both sides refuse TLS 1.2. Relay auth needs the TLS 1.3 exporter (RFC 8446).
+- The epoch is a start time. A check for "uptime went backwards" misses a restart during a long disconnect.
+- The dialer sends no SNI. The server name would be the dialed key. Anyone who sees the first QUIC packet can read it.
+- QUIC Initials go only through the relay. An attacker that spoofs a proven address cannot start a handshake and get the key of the listener from its certificate. The rule covers the two directions. The first byte does not show which side sent an Initial.
+- QUIC, punch messages and STUN share one socket. The NAT mapping that a probe opens is the mapping that QUIC uses.
+- Probe keys sign PROBE and PROBE_ACK. These messages go over UDP, where anyone on the path can read them. The endpoint keys stay off the wire.
+- A PROBE with an unknown probe key gets no answer. A key that is not allowed never hears from the sockets of the endpoint.
+- PROBE and PROBE_ACK have the same size. An answer to a replayed probe does not amplify it.
+- The host checks the grant before it looks up the service. A key without a grant cannot learn which services exist.
+- Frames are not compressed. QUIC packets are encrypted and do not compress. Compression of data that an attacker can influence also opens length side channels.
+
 ## Name
 
 `natty`: NAT traversal, and "natural" as in no enhancement, few crates.

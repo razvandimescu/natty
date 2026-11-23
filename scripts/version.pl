@@ -23,7 +23,7 @@ my @pinned = (
     ['Cargo.lock', 'natty-relay package', lock_entry('natty-relay')],
     ['fuzz/Cargo.lock', 'natty package', lock_entry('natty')],
 );
-my @docs = ('README.md', 'relay/README.md', 'docs/index.html');
+my @docs = ('README.md', 'relay/README.md', 'docs/index.html', 'docs/library.md', 'docs/cli.md');
 
 chdir File::Spec->catdir(dirname(__FILE__), '..') or die "cannot enter the repository root: $!\n";
 
