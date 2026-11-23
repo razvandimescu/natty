@@ -50,7 +50,13 @@ Copy `cert.pem` to the peers. The natty examples read it from `NATTY_CA`.
 
 ### Test the relay
 
-Run `curl https://relay.example.net/health`. For a self-signed certificate, add `--cacert cert.pem`. The first line is `ok`. The other lines are aggregate counters.
+Run `curl https://relay.example.net/health`. For a self-signed certificate, add `--cacert cert.pem`. The answer is `ok`.
+
+The relay shows its aggregate counters only to connections from a loopback address. To see them, run this command on the relay host:
+
+```sh
+curl --resolve relay.example.net:443:127.0.0.1 https://relay.example.net/health
+```
 
 ## Flags
 

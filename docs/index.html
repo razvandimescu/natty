@@ -557,7 +557,7 @@ natty connect \
 natty-relay --cert fullchain.pem \
   --key privkey.pem
 
-<span class="c"># The first line of the answer is ok.</span>
+<span class="c"># The answer is ok.</span>
 curl https://relay.example.net/health</code></pre>
         <a href="https://github.com/razvandimescu/natty#run-a-relay">Run a relay &rarr;</a>
       </article>
@@ -593,8 +593,9 @@ curl https://relay.example.net/health</code></pre>
       <h2 id="relay-title">What the relay <em>sees</em> and what it counts</h2>
     </header>
     <div class="body">
-      <p>The relay code has no per-session log path. It keeps only aggregate counters. A new relay gives this answer:</p>
-<pre><code><span class="c">$ curl https://relay.example.net/health</span>
+      <p>The relay code has no per-session log path. It keeps only aggregate counters. Only the relay host can read them. A new relay gives this answer:</p>
+<pre><code><span class="c">$ curl --resolve relay.example.net:443:127.0.0.1 \
+    https://relay.example.net/health</span>
 ok
 uptime_secs 0
 sessions 0
