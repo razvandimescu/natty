@@ -54,6 +54,8 @@ relay carrying only the handshake.
       ([#17](https://github.com/razvandimescu/natty/pull/17)).
 - [x] `natty-relay` deployable as a single binary: `cargo install natty-relay`
       or the static Docker image.
+- [x] `natty` CLI binaries for Linux, macOS and Windows on each release and a
+      Homebrew formula ([#33](https://github.com/razvandimescu/natty/pull/33)).
 - [ ] NAT simulation in Docker (iptables masquerade variants) in CI.
 - [ ] RSS measurement on a Pi Zero. The armv6 cross-build
       (`messense/rust-musl-cross:arm-musleabihf`) already runs there.
@@ -63,6 +65,11 @@ relay carrying only the handshake.
 
 Gate: numa can build its friend-to-friend feature against 0.1.0 behind a
 feature flag without touching natty internals.
+
+## Open questions
+
+- Encrypt CANDIDATES, so that the relay does not learn local addresses. ring has no static X25519. The candidates would then go inside the QUIC connection, which the application owns.
+- Punch to a dialer with no standing session (client-only mode). This changes what the relay learns about presence. Test it, then decide.
 
 ## Explicitly deferred
 

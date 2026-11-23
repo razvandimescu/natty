@@ -4,7 +4,7 @@ natty-relay is the relay server for [natty](https://github.com/razvandimescu/nat
 
 Each peer keeps one TLS session to a relay. The relay forwards packets between the sessions by public key. Its STUN responder tells each peer its public address. The peers use these addresses to open a direct path through their NATs (hole punching). If the punch does not succeed, the relay continues to forward the encrypted packets.
 
-[The project page](https://razvandimescu.github.io/natty/) replays two runs between two peers behind NAT. The run with the [opener](https://github.com/razvandimescu/natty#how-it-works) moves to a direct path. The run without it stays on the relay.
+[The project page](https://razvandimescu.github.io/natty/) replays two runs between two peers behind NAT. The run with the [opener](https://razvandimescu.github.io/natty/how-it-works.html) moves to a direct path. The run without it stays on the relay.
 
 ## Install
 
