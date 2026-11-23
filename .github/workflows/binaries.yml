@@ -1,0 +1,91 @@
+name: binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    paths-ignore: ['**.md', 'docs/**']
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'pr' }}
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master on 2026-11-15, it has no tags
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install musl
+        if: endsWith(matrix.target, '-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --locked -p natty --features cli --target ${{ matrix.target }}
+        env:
+          CC_aarch64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+
+      - name: Run
+        run: NATTY_KEY="$RUNNER_TEMP/key" "target/${{ matrix.target }}/release/natty" key | grep -Ex '[a-z0-9]{52}'
+
+      - name: Package
+        run: |
+          name="natty-$TAG-${{ matrix.target }}"
+          exe=$([ "$RUNNER_OS" = Windows ] && echo .exe || true)
+          mkdir "$name"
+          cp "target/${{ matrix.target }}/release/natty$exe" LICENSE-MIT LICENSE-APACHE "$name/"
+          if [ "$RUNNER_OS" = Windows ]; then
+            7z a "$name.zip" "$name" > /dev/null
+            echo "ARCHIVE=$name.zip" >> "$GITHUB_ENV"
+          else
+            tar -czf "$name.tar.gz" "$name"
+            echo "ARCHIVE=$name.tar.gz" >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.ARCHIVE }}
+          path: ${{ env.ARCHIVE }}
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Release
+        working-directory: dist
+        run: |
+          sha256sum * > SHA256SUMS
+          gh release create "$TAG" --verify-tag --generate-notes *
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
