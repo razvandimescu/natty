@@ -10,18 +10,16 @@ on:
 permissions:
   contents: read
 
-env:
-  TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'pr' }}
-
 jobs:
   build:
     strategy:
       matrix:
         include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
-          - { os: macos-latest, target: aarch64-apple-darwin }
-          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, name: natty-linux-x86_64 }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, name: natty-linux-aarch64 }
+          - { os: macos-latest, target: aarch64-apple-darwin, name: natty-macos-aarch64 }
+          - { os: macos-latest, target: x86_64-apple-darwin, name: natty-macos-x86_64 }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, name: natty-windows-x86_64 }
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -51,22 +49,19 @@ jobs:
 
       - name: Package
         run: |
-          name="natty-$TAG-${{ matrix.target }}"
-          exe=$([ "$RUNNER_OS" = Windows ] && echo .exe || true)
-          mkdir "$name"
-          cp "target/${{ matrix.target }}/release/natty$exe" LICENSE-MIT LICENSE-APACHE "$name/"
+          mkdir package
+          cp target/${{ matrix.target }}/release/natty${{ runner.os == 'Windows' && '.exe' || '' }} LICENSE-MIT LICENSE-APACHE package/
+          cd package
           if [ "$RUNNER_OS" = Windows ]; then
-            7z a "$name.zip" "$name" > /dev/null
-            echo "ARCHIVE=$name.zip" >> "$GITHUB_ENV"
+            7z a "../${{ matrix.name }}.zip" * > /dev/null
           else
-            tar -czf "$name.tar.gz" "$name"
-            echo "ARCHIVE=$name.tar.gz" >> "$GITHUB_ENV"
+            tar -czf "../${{ matrix.name }}.tar.gz" *
           fi
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ env.ARCHIVE }}
-          path: ${{ env.ARCHIVE }}
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}.*
           if-no-files-found: error
 
   release:
@@ -84,8 +79,8 @@ jobs:
       - name: Release
         working-directory: dist
         run: |
-          sha256sum * > SHA256SUMS
-          gh release create "$TAG" --verify-tag --generate-notes *
+          for archive in *; do sha256sum "$archive" > "$archive.sha256"; done
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes *
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
