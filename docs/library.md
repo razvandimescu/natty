@@ -4,7 +4,7 @@ Add natty from crates.io:
 
 ```toml
 [dependencies]
-natty = "0.0.3"
+natty = "0.0.4"
 ```
 
 This code is a sketch. [examples/pipe.rs](../examples/pipe.rs) is a complete program.

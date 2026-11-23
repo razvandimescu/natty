@@ -8,7 +8,7 @@ For a second service at the same time, start a second `natty connect` with its o
 
 The agent reads the grants file again every 5 s. When you remove a grant, the agent ends the open streams of that grant. When you remove the line of a key, the agent also closes the connections of that key. A key with no grant gets the same refusal for every service name. It cannot learn which services exist. The client sends a service name, never an address.
 
-The image `ghcr.io/razvandimescu/natty:v0.0.3` holds the CLI for linux/amd64. It runs as user 65532. In CI, the image runs `natty key` with a read-only root file system and no capabilities. Keep the key file on a volume. A new key file gives the agent a new address.
+The image `ghcr.io/razvandimescu/natty:v0.0.4` holds the CLI for linux/amd64. It runs as user 65532. In CI, the image runs `natty key` with a read-only root file system and no capabilities. Keep the key file on a volume. A new key file gives the agent a new address.
 
 To run the agent in Docker on a Linux host:
 
@@ -16,7 +16,7 @@ To run the agent in Docker on a Linux host:
 mkdir -p ~/.natty
 docker run -d --name natty --network host --user "$(id -u):$(id -g)" \
   -v ~/.natty:/keys -e NATTY_KEY=/keys/key -v "$PWD:/config:ro" \
-  ghcr.io/razvandimescu/natty:v0.0.3 \
+  ghcr.io/razvandimescu/natty:v0.0.4 \
   serve relay.numa.rs --grants /config/grants --service web=127.0.0.1:8000
 docker logs natty
 ```
