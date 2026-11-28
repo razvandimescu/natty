@@ -153,14 +153,11 @@ impl ConnGuard {
             v4 => v4,
         };
         let mut conns = state.conns.lock().unwrap();
-        if conns.values().sum::<usize>() >= state.max_conns {
+        let count = conns.get(&bucket).copied().unwrap_or(0);
+        if count >= state.max_conns_per_ip || conns.values().sum::<usize>() >= state.max_conns {
             return None;
         }
-        let count = conns.entry(bucket).or_default();
-        if *count >= state.max_conns_per_ip {
-            return None;
-        }
-        *count += 1;
+        *conns.entry(bucket).or_default() += 1;
         Some(Self {
             state: state.clone(),
             bucket,
@@ -324,8 +321,9 @@ impl State {
         bucket: &mut TokenBucket,
     ) {
         let len = data.len() as u64;
+        let cost = std::mem::size_of::<PublicKey>() + data.len();
         // The session's own cap first, so its excess never spends the shared budget.
-        if !bucket.take(data.len()) || !self.total.lock().unwrap().take(data.len()) {
+        if !bucket.take(cost) || !self.total.lock().unwrap().take(cost) {
             bump(&self.stats.dropped_frames, 1);
             return;
         }
@@ -376,7 +374,7 @@ mod tests {
     use tokio_rustls::rustls::crypto::ring;
     use tokio_rustls::rustls::server::ResolvesServerCertUsingSni;
 
-    fn relay() -> Relay {
+    fn relay(max_conns_per_ip: usize) -> Relay {
         let tls = ServerConfig::builder_with_provider(Arc::new(ring::default_provider()))
             .with_safe_default_protocol_versions()
             .unwrap()
@@ -386,7 +384,7 @@ mod tests {
             tls: Arc::new(tls),
             cap: 0,
             total_cap: 0,
-            max_conns_per_ip: 1,
+            max_conns_per_ip,
             max_conns: 2,
             stun_port: 0,
         })
@@ -394,7 +392,7 @@ mod tests {
 
     #[test]
     fn health_shows_counters_only_to_loopback() {
-        let relay = relay();
+        let relay = relay(1);
         assert_eq!(relay.state.health("192.0.2.1".parse().unwrap()), "ok\n");
         assert!(relay
             .state
@@ -404,11 +402,18 @@ mod tests {
 
     #[test]
     fn connections_past_the_total_limit_are_refused() {
-        let relay = relay();
+        let relay = relay(1);
         let ip = |last: u8| IpAddr::from([192, 0, 2, last]);
         let held = [ip(1), ip(2)].map(|ip| ConnGuard::acquire(&relay.state, ip).unwrap());
         assert!(ConnGuard::acquire(&relay.state, ip(3)).is_none());
         drop(held);
         assert!(ConnGuard::acquire(&relay.state, ip(3)).is_some());
+    }
+
+    #[test]
+    fn a_refused_connection_leaves_no_bucket() {
+        let relay = relay(0);
+        assert!(ConnGuard::acquire(&relay.state, IpAddr::from([192, 0, 2, 1])).is_none());
+        assert!(relay.state.conns.lock().unwrap().is_empty());
     }
 }
