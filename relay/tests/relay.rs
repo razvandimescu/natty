@@ -544,6 +544,32 @@ async fn closed_endpoint_tells_its_peers_before_it_goes() {
     ));
 }
 
+#[tokio::test]
+async fn endpoint_holds_at_most_64_handshakes_it_has_not_accepted() {
+    let h = start(0, 16).await;
+    let listener = endpoint(&h, SecretKey::generate()).await;
+    let mut stranger = connect(&h, &SecretKey::generate()).await;
+    for data in initials_nobody_finishes(&h, 72).await {
+        send(
+            &mut stranger,
+            Frame::Send {
+                dst: listener.public_key(),
+                data,
+            },
+        )
+        .await;
+    }
+    sync(&mut stranger).await;
+
+    let mut pending = Vec::new();
+    while let Ok(Some(incoming)) =
+        tokio::time::timeout(Duration::from_secs(1), listener.accept()).await
+    {
+        pending.push(incoming);
+    }
+    assert_eq!(pending.len(), 64);
+}
+
 async fn echo_upstream() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();

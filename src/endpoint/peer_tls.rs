@@ -31,6 +31,8 @@ const PKCS8_PREFIX: [u8; 16] = [
     0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
 ];
 const QUIC_KEEPALIVE: Duration = Duration::from_secs(15);
+const PENDING_HANDSHAKES: usize = 64;
+const PENDING_BYTES: u64 = 1 << 20;
 
 /// Peers authenticate with RFC 7250 raw public keys: the Ed25519 key is the
 /// whole identity, so there is no certificate to build or chain to check.
@@ -67,7 +69,10 @@ impl PeerTls {
         tls.alpn_protocols = self.alpn.clone();
         let quic = QuicServerConfig::try_from(tls).map_err(io::Error::other)?;
         let mut config = quinn::ServerConfig::with_crypto(Arc::new(quic));
-        config.transport_config(transport());
+        config
+            .transport_config(transport())
+            .max_incoming(PENDING_HANDSHAKES)
+            .incoming_buffer_size_total(PENDING_BYTES);
         Ok(config)
     }
 
