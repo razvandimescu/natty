@@ -164,6 +164,13 @@ impl Endpoint {
         self.quic.accept().await
     }
 
+    #[cfg(feature = "tunnel")]
+    pub(crate) fn claimed_key(&self, incoming: &quinn::Incoming) -> Option<PublicKey> {
+        let paths = self.socket.paths.lock().unwrap();
+        let route = paths.route(&incoming.remote_address(), Instant::now());
+        route.map(|(key, _)| key)
+    }
+
     /// Closes every connection and waits until the peers have been told, so
     /// the process can exit right after. A process that exits without it
     /// leaves its peers to wait out the idle timeout.

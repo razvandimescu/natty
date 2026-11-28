@@ -90,7 +90,8 @@ The `tunnel` feature serves TCP services by name with the ALPN `natty-tunnel/1`.
 - The dialer key comes from the QUIC handshake. The dialer never sends an address.
 - The host checks the grant before the service. Without a grant, every name gets DENIED. A listing holds only granted services that exist.
 - When a grant goes, or its service gets another upstream or none, its open streams end. When a key loses its entry in the grants, its connections close. The host allows only the keys with a grant.
-- Close codes: 1 for a peer with no key, 2 for a key with too many connections, 3 for a key that lost its entry in the grants.
+- The host counts a connection against a key before the handshake. That key is the sender of the first Initial, as the relay gives it. Each key with an entry in the grants has 4 connections. All other keys share 8. The host has 64 connections in total. Past a limit, the host refuses the handshake. A handshake that does not end within 10 s stops.
+- Close codes: 1 for a peer with no key, 3 for a key that lost its entry in the grants. The host does not send code 2.
 
 ## What the relay knows
 
