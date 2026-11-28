@@ -53,6 +53,7 @@ async fn start_capped(cap: u32, total_cap: u32, max_conns_per_ip: usize) -> Harn
         cap,
         total_cap,
         max_conns_per_ip,
+        max_conns: 1000,
         stun_port: udp.local_addr().unwrap().port(),
     });
     let harness = Harness {
@@ -282,6 +283,45 @@ async fn per_ip_limit_refuses_extra_connections() {
     let _held = connect(&h, &SecretKey::generate()).await;
     let refused = natty::connect(h.tls.clone(), &h.relay, &SecretKey::generate()).await;
     assert!(refused.is_err());
+}
+
+#[tokio::test]
+async fn session_that_stops_reading_is_closed() {
+    let h = start(0, 16).await;
+    let (a, b) = (SecretKey::generate(), SecretKey::generate());
+    let mut sa = connect(&h, &a).await;
+    let _unread = connect(&h, &b).await;
+    let datagram = Frame::Send {
+        dst: b.public(),
+        data: vec![0; wire::MAX_DATAGRAM],
+    };
+    for _ in 0..16384 {
+        send(&mut sa, datagram.clone()).await;
+    }
+
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            send(
+                &mut sa,
+                Frame::Send {
+                    dst: b.public(),
+                    data: vec![1],
+                },
+            )
+            .await;
+            send(&mut sa, Frame::Ping([1; 8])).await;
+            loop {
+                match next(&mut sa).await {
+                    Frame::PeerGone(key) if key == b.public() => return,
+                    Frame::Pong(_) => break,
+                    _ => {}
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    })
+    .await
+    .expect("the relay kept a session that stopped reading");
 }
 
 #[tokio::test]

@@ -26,6 +26,7 @@ use limit::TokenBucket;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const CLOSE_LINGER: Duration = Duration::from_secs(5);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const SESSION_QUEUE: usize = 256;
 
 pub struct Config {
@@ -36,6 +37,7 @@ pub struct Config {
     pub total_cap: u32,
     /// Concurrent connections per IPv4 address or IPv6 /64.
     pub max_conns_per_ip: usize,
+    pub max_conns: usize,
     /// Advertised in WELCOME; 0 when no STUN responder runs.
     pub stun_port: u16,
 }
@@ -50,6 +52,7 @@ struct State {
     cap: u32,
     total: Mutex<TokenBucket>,
     max_conns_per_ip: usize,
+    max_conns: usize,
     stun_port: u16,
     epoch: u64,
     started: Instant,
@@ -90,6 +93,7 @@ impl Relay {
                 cap: config.cap,
                 total: Mutex::new(TokenBucket::new(config.total_cap)),
                 max_conns_per_ip: config.max_conns_per_ip,
+                max_conns: config.max_conns,
                 stun_port: config.stun_port,
                 epoch,
                 started: Instant::now(),
@@ -149,6 +153,9 @@ impl ConnGuard {
             v4 => v4,
         };
         let mut conns = state.conns.lock().unwrap();
+        if conns.values().sum::<usize>() >= state.max_conns {
+            return None;
+        }
         let count = conns.entry(bucket).or_default();
         if *count >= state.max_conns_per_ip {
             return None;
@@ -269,6 +276,7 @@ async fn run_session(
     let reason = loop {
         tokio::select! {
             _ = &mut kill => break CloseReason::Replaced,
+            () = tx.closed() => break CloseReason::Normal,
             read = timeout(IDLE_TIMEOUT, wire::read_frame(&mut reader)) => match read {
                 Err(_) => break CloseReason::Idle,
                 Ok(Err(e)) if e.kind() == io::ErrorKind::InvalidData => break CloseReason::Protocol,
@@ -302,7 +310,7 @@ async fn write_loop(
     mut writer: WriteHalf<TlsStream<TcpStream>>,
     mut rx: mpsc::Receiver<Frame>,
 ) -> io::Result<()> {
-    wire::write_frames(&mut writer, &mut rx).await?;
+    wire::write_frames(&mut writer, &mut rx, WRITE_TIMEOUT).await?;
     writer.shutdown().await
 }
 
@@ -368,24 +376,39 @@ mod tests {
     use tokio_rustls::rustls::crypto::ring;
     use tokio_rustls::rustls::server::ResolvesServerCertUsingSni;
 
-    #[test]
-    fn health_shows_counters_only_to_loopback() {
+    fn relay() -> Relay {
         let tls = ServerConfig::builder_with_provider(Arc::new(ring::default_provider()))
             .with_safe_default_protocol_versions()
             .unwrap()
             .with_no_client_auth()
             .with_cert_resolver(Arc::new(ResolvesServerCertUsingSni::new()));
-        let relay = Relay::new(Config {
+        Relay::new(Config {
             tls: Arc::new(tls),
             cap: 0,
             total_cap: 0,
             max_conns_per_ip: 1,
+            max_conns: 2,
             stun_port: 0,
-        });
+        })
+    }
+
+    #[test]
+    fn health_shows_counters_only_to_loopback() {
+        let relay = relay();
         assert_eq!(relay.state.health("192.0.2.1".parse().unwrap()), "ok\n");
         assert!(relay
             .state
             .health("::1".parse().unwrap())
             .contains("\nsessions 0\n"));
+    }
+
+    #[test]
+    fn connections_past_the_total_limit_are_refused() {
+        let relay = relay();
+        let ip = |last: u8| IpAddr::from([192, 0, 2, last]);
+        let held = [ip(1), ip(2)].map(|ip| ConnGuard::acquire(&relay.state, ip).unwrap());
+        assert!(ConnGuard::acquire(&relay.state, ip(3)).is_none());
+        drop(held);
+        assert!(ConnGuard::acquire(&relay.state, ip(3)).is_some());
     }
 }
