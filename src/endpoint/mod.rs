@@ -26,7 +26,8 @@ use net::Udp;
 use paths::Paths;
 use peer_tls::PeerTls;
 use session::Relay;
-use socket::{virtual_addr, VirtualSocket};
+pub(crate) use socket::virtual_addr;
+use socket::VirtualSocket;
 use traversal::Traversal;
 
 const QUEUE: usize = 1024;

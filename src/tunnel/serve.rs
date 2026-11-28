@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use log::{debug, info, warn};
-use quinn::{Connection, RecvStream, SendStream};
+use quinn::{Connection, ConnectionError, RecvStream, SendStream};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{watch, OwnedSemaphorePermit, Semaphore};
@@ -17,6 +17,7 @@ use crate::{peer_key, Endpoint, PublicKey};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(if cfg!(test) { 1 } else { 10 });
 const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(10);
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_CONNECTIONS: usize = 64;
 const PEER_CONNECTIONS: usize = 4;
 const STRANGER_CONNECTIONS: usize = 8;
@@ -35,17 +36,22 @@ pub async fn serve(endpoint: &Endpoint, policy: watch::Receiver<Policy>) {
 
 async fn accept(endpoint: &Endpoint, policy: &watch::Receiver<Policy>) {
     let total = Arc::new(Semaphore::new(MAX_CONNECTIONS));
-    let slots = Arc::new(Slots::new());
+    let slots = Slots::new();
     while let Some(incoming) = endpoint.accept().await {
-        let Ok(permit) = Arc::clone(&total).try_acquire_owned() else {
+        let claimed = policy.borrow().known_key_at(incoming.remote_address());
+        let held = slots
+            .take(claimed)
+            .zip(Arc::clone(&total).try_acquire_owned().ok());
+        let Some(held) = held else {
             debug!("tunnel: connection limit reached, refusing a handshake");
             incoming.refuse();
             continue;
         };
         let policy = policy.clone();
-        let slots = Arc::clone(&slots);
         tokio::spawn(async move {
-            let conn = match incoming.await {
+            let _held = held;
+            let handshake = timeout(HANDSHAKE_TIMEOUT, incoming).await;
+            let conn = match handshake.unwrap_or(Err(ConnectionError::TimedOut)) {
                 Ok(conn) => conn,
                 Err(e) => {
                     debug!("tunnel: handshake failed: {e}");
@@ -57,12 +63,6 @@ async fn accept(endpoint: &Endpoint, policy: &watch::Receiver<Policy>) {
                 return;
             };
             let known = policy.borrow().knows(&peer);
-            let Some(slot) = slots.take(peer, known) else {
-                debug!("tunnel: {peer}: connection limit reached");
-                conn.close(2u32.into(), b"busy");
-                return;
-            };
-            let _held = (permit, slot);
             tokio::select! {
                 () = serve_peer(&conn, peer, policy.clone()) => {}
                 () = until(policy, |p| !p.knows(&peer)), if known => {
@@ -102,9 +102,10 @@ async fn serve_peer(conn: &Connection, peer: PublicKey, policy: watch::Receiver<
     }
 }
 
-/// Connection slots once the key of the peer is known. Each known key has
-/// its own, so one key cannot crowd out the others; every other key shares
-/// one small pool, so new keys cannot grow the map.
+/// Connection slots, taken before the handshake for the key that the relay
+/// names as the sender. Each known key has its own, so one key cannot crowd
+/// out the others; every other key shares one small pool, so new keys cannot
+/// grow the map.
 struct Slots {
     known: Mutex<HashMap<PublicKey, Arc<Semaphore>>>,
     strangers: Arc<Semaphore>,
@@ -118,15 +119,16 @@ impl Slots {
         }
     }
 
-    fn take(&self, peer: PublicKey, known: bool) -> Option<OwnedSemaphorePermit> {
-        let pool = if known {
-            let mut pools = self.known.lock().unwrap();
-            let pool = pools
-                .entry(peer)
-                .or_insert_with(|| Arc::new(Semaphore::new(PEER_CONNECTIONS)));
-            Arc::clone(pool)
-        } else {
-            Arc::clone(&self.strangers)
+    fn take(&self, known: Option<PublicKey>) -> Option<OwnedSemaphorePermit> {
+        let pool = match known {
+            Some(peer) => {
+                let mut pools = self.known.lock().unwrap();
+                let pool = pools
+                    .entry(peer)
+                    .or_insert_with(|| Arc::new(Semaphore::new(PEER_CONNECTIONS)));
+                Arc::clone(pool)
+            }
+            None => Arc::clone(&self.strangers),
         };
         pool.try_acquire_owned().ok()
     }
@@ -273,16 +275,16 @@ mod tests {
         let key = || SecretKey::generate().public();
         let alice = key();
         let held: Vec<_> = (0..PEER_CONNECTIONS)
-            .map(|_| slots.take(alice, true).unwrap())
+            .map(|_| slots.take(Some(alice)).unwrap())
             .collect();
-        assert!(slots.take(alice, true).is_none());
-        assert!(slots.take(key(), true).is_some());
+        assert!(slots.take(Some(alice)).is_none());
+        assert!(slots.take(Some(key())).is_some());
         let _strangers: Vec<_> = (0..STRANGER_CONNECTIONS)
-            .map(|_| slots.take(key(), false).unwrap())
+            .map(|_| slots.take(None).unwrap())
             .collect();
-        assert!(slots.take(key(), false).is_none());
+        assert!(slots.take(None).is_none());
         drop(held);
-        assert!(slots.take(alice, true).is_some());
+        assert!(slots.take(Some(alice)).is_some());
     }
 
     #[tokio::test]

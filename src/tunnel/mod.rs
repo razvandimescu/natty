@@ -10,6 +10,7 @@ mod serve;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::future::Future;
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use quinn::{Connection, RecvStream, SendStream};
@@ -22,6 +23,7 @@ pub use proto::fuzz_tunnel;
 pub use proto::{valid_name, Status, ALPN};
 pub use serve::serve;
 
+use crate::endpoint::virtual_addr;
 use crate::{Endpoint, PublicKey};
 use proto::{parse_listing, LIST, MAX_LISTING_LEN};
 
@@ -42,6 +44,13 @@ pub struct Policy {
 impl Policy {
     fn knows(&self, peer: &PublicKey) -> bool {
         self.grants.contains_key(peer)
+    }
+
+    fn known_key_at(&self, addr: SocketAddr) -> Option<PublicKey> {
+        self.grants
+            .keys()
+            .copied()
+            .find(|key| virtual_addr(key) == addr)
     }
 
     fn permits(&self, peer: &PublicKey, service: &str) -> bool {

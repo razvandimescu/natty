@@ -691,3 +691,59 @@ async fn tunnel_closes_the_connections_of_a_key_that_goes() {
     ));
     assert!(tunnel::list(&stranger_conn).await.unwrap().is_empty());
 }
+
+async fn initials_nobody_finishes(h: &Harness, count: usize) -> Vec<Vec<u8>> {
+    let silent = SecretKey::generate();
+    let mut sink = connect(h, &silent).await;
+    let dialer = Arc::new(bound(h, SecretKey::generate(), tunnel::ALPN).await);
+    for _ in 0..count {
+        let (dialer, key) = (Arc::clone(&dialer), silent.public());
+        tokio::spawn(async move { dialer.connect(key).await });
+    }
+    let mut initials: Vec<Vec<u8>> = Vec::new();
+    while initials.len() < count {
+        let Frame::Recv { data, .. } = next(&mut sink).await else {
+            continue;
+        };
+        let is_initial = data.first().is_some_and(|b| b & 0xB0 == 0x80);
+        if is_initial && !initials.iter().any(|seen| dcid(seen) == dcid(&data)) {
+            initials.push(data);
+        }
+    }
+    initials
+}
+
+fn dcid(initial: &[u8]) -> &[u8] {
+    &initial[6..6 + usize::from(initial[5])]
+}
+
+#[tokio::test]
+async fn tunnel_serves_a_granted_key_while_a_stranger_leaves_handshakes_unfinished() {
+    let h = start(0, 16).await;
+    let host = bound(&h, SecretKey::generate(), tunnel::ALPN).await;
+    let host_key = host.public_key();
+    let friend = bound(&h, SecretKey::generate(), tunnel::ALPN).await;
+    let (_policy, rx) = watch::channel(Policy {
+        grants: grants(friend.public_key(), &[]),
+        ..Policy::default()
+    });
+    tokio::spawn(async move { tunnel::serve(&host, rx).await });
+
+    let mut stranger = connect(&h, &SecretKey::generate()).await;
+    for data in initials_nobody_finishes(&h, 64).await {
+        send(
+            &mut stranger,
+            Frame::Send {
+                dst: host_key,
+                data,
+            },
+        )
+        .await;
+    }
+    sync(&mut stranger).await;
+
+    let conn = tunnel::dial(&friend, host_key)
+        .await
+        .expect("the granted key was refused");
+    assert!(tunnel::list(&conn).await.unwrap().is_empty());
+}
