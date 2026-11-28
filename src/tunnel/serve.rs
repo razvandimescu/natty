@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use log::{debug, info, warn};
@@ -36,9 +36,11 @@ pub async fn serve(endpoint: &Endpoint, policy: watch::Receiver<Policy>) {
 
 async fn accept(endpoint: &Endpoint, policy: &watch::Receiver<Policy>) {
     let total = Arc::new(Semaphore::new(MAX_CONNECTIONS));
-    let slots = Slots::new();
+    let mut slots = Slots::new();
     while let Some(incoming) = endpoint.accept().await {
-        let claimed = policy.borrow().known_key_at(incoming.remote_address());
+        let claimed = endpoint
+            .claimed_key(&incoming)
+            .filter(|key| policy.borrow().knows(key));
         let held = slots
             .take(claimed)
             .zip(Arc::clone(&total).try_acquire_owned().ok());
@@ -107,30 +109,27 @@ async fn serve_peer(conn: &Connection, peer: PublicKey, policy: watch::Receiver<
 /// out the others; every other key shares one small pool, so new keys cannot
 /// grow the map.
 struct Slots {
-    known: Mutex<HashMap<PublicKey, Arc<Semaphore>>>,
+    known: HashMap<PublicKey, Arc<Semaphore>>,
     strangers: Arc<Semaphore>,
 }
 
 impl Slots {
     fn new() -> Self {
         Self {
-            known: Mutex::default(),
+            known: HashMap::new(),
             strangers: Arc::new(Semaphore::new(STRANGER_CONNECTIONS)),
         }
     }
 
-    fn take(&self, known: Option<PublicKey>) -> Option<OwnedSemaphorePermit> {
+    fn take(&mut self, known: Option<PublicKey>) -> Option<OwnedSemaphorePermit> {
         let pool = match known {
-            Some(peer) => {
-                let mut pools = self.known.lock().unwrap();
-                let pool = pools
-                    .entry(peer)
-                    .or_insert_with(|| Arc::new(Semaphore::new(PEER_CONNECTIONS)));
-                Arc::clone(pool)
-            }
-            None => Arc::clone(&self.strangers),
+            Some(peer) => self
+                .known
+                .entry(peer)
+                .or_insert_with(|| Arc::new(Semaphore::new(PEER_CONNECTIONS))),
+            None => &self.strangers,
         };
-        pool.try_acquire_owned().ok()
+        Arc::clone(pool).try_acquire_owned().ok()
     }
 }
 
@@ -271,7 +270,7 @@ mod tests {
 
     #[test]
     fn each_known_key_and_the_strangers_have_capped_slots() {
-        let slots = Slots::new();
+        let mut slots = Slots::new();
         let key = || SecretKey::generate().public();
         let alice = key();
         let held: Vec<_> = (0..PEER_CONNECTIONS)

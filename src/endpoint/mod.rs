@@ -26,8 +26,7 @@ use net::Udp;
 use paths::Paths;
 use peer_tls::PeerTls;
 use session::Relay;
-pub(crate) use socket::virtual_addr;
-use socket::VirtualSocket;
+use socket::{virtual_addr, VirtualSocket};
 use traversal::Traversal;
 
 const QUEUE: usize = 1024;
@@ -163,6 +162,13 @@ impl Endpoint {
     /// then read the dialer's key with [`peer_key`].
     pub async fn accept(&self) -> Option<quinn::Incoming> {
         self.quic.accept().await
+    }
+
+    #[cfg(feature = "tunnel")]
+    pub(crate) fn claimed_key(&self, incoming: &quinn::Incoming) -> Option<PublicKey> {
+        let paths = self.socket.paths.lock().unwrap();
+        let route = paths.route(&incoming.remote_address(), Instant::now());
+        route.map(|(key, _)| key)
     }
 
     /// Closes every connection and waits until the peers have been told, so

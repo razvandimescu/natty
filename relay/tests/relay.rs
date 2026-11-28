@@ -700,21 +700,17 @@ async fn initials_nobody_finishes(h: &Harness, count: usize) -> Vec<Vec<u8>> {
         let (dialer, key) = (Arc::clone(&dialer), silent.public());
         tokio::spawn(async move { dialer.connect(key).await });
     }
-    let mut initials: Vec<Vec<u8>> = Vec::new();
+    let mut initials = HashMap::new();
     while initials.len() < count {
         let Frame::Recv { data, .. } = next(&mut sink).await else {
             continue;
         };
-        let is_initial = data.first().is_some_and(|b| b & 0xB0 == 0x80);
-        if is_initial && !initials.iter().any(|seen| dcid(seen) == dcid(&data)) {
-            initials.push(data);
+        if data.first().is_some_and(|b| b & 0xB0 == 0x80) {
+            let dcid = data[6..6 + usize::from(data[5])].to_vec();
+            initials.entry(dcid).or_insert(data);
         }
     }
-    initials
-}
-
-fn dcid(initial: &[u8]) -> &[u8] {
-    &initial[6..6 + usize::from(initial[5])]
+    initials.into_values().collect()
 }
 
 #[tokio::test]
