@@ -80,7 +80,7 @@ Punch message: `magic (4) | type (1) | signer (32) | body | signature (64)`. The
 The `tunnel` feature serves TCP services by name with the ALPN `natty-tunnel/1`. The dialer opens one bidirectional stream for each TCP connection:
 
 1. The dialer sends a service name or `?`, then `\n`. The line has at most 64 bytes before `\n`. It must arrive within 10 s.
-2. The host answers one status byte. After a line that is too long, empty or not UTF-8, it ends the stream with no status.
+2. The host answers one status byte. After a line that is too long, not UTF-8, or neither `?` nor a name, it ends the stream with no status.
 3. After status 0, both sides copy bytes. The end of one direction is a TCP half-close. The stream ends when both directions end.
 
 - Names: 1 to 63 letters, digits and hyphens. The host trims white space and compares in lower case.
@@ -91,7 +91,7 @@ The `tunnel` feature serves TCP services by name with the ALPN `natty-tunnel/1`.
 - The host checks the grant before the service. Without a grant, every name gets DENIED. A listing holds only granted services that exist.
 - When a grant goes, or its service gets another upstream or none, its open streams end. When a key loses its entry in the grants, its connections close. The host allows only the keys with a grant.
 - The host counts a connection against a key before the handshake. That key is the sender of the first Initial, as the relay gives it. Each key with an entry in the grants has 4 connections. All other keys share 8. The host has 64 connections in total. Past a limit, the host refuses the handshake. A handshake that does not end within 10 s stops.
-- Close codes: 1 for a peer with no key, 3 for a key that lost its entry in the grants. The host does not send code 2.
+- Close codes: 1 for a peer with no key or with a key that did not send the first Initial, 3 for a key that lost its entry in the grants. The host does not send code 2.
 
 ## What the relay knows
 

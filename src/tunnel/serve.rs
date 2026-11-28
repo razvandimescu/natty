@@ -38,9 +38,8 @@ async fn accept(endpoint: &Endpoint, policy: &watch::Receiver<Policy>) {
     let total = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     let mut slots = Slots::new();
     while let Some(incoming) = endpoint.accept().await {
-        let claimed = endpoint
-            .claimed_key(&incoming)
-            .filter(|key| policy.borrow().knows(key));
+        let sender = endpoint.claimed_key(&incoming);
+        let claimed = sender.filter(|key| policy.borrow().knows(key));
         let held = slots
             .take(claimed)
             .zip(Arc::clone(&total).try_acquire_owned().ok());
@@ -60,7 +59,7 @@ async fn accept(endpoint: &Endpoint, policy: &watch::Receiver<Policy>) {
                     return;
                 }
             };
-            let Some(peer) = peer_key(&conn) else {
+            let Some(peer) = peer_key(&conn).filter(|peer| Some(*peer) == sender) else {
                 conn.close(1u32.into(), b"no key");
                 return;
             };

@@ -59,17 +59,17 @@ pub fn valid_name(name: &str) -> bool {
         && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
-/// A request line without its newline. The result is `?` or a candidate name
-/// in lower case; the policy decides whether the name exists.
+/// A request line without its newline. The result is `?` or a valid name in
+/// lower case; the policy decides whether the name exists.
 pub(super) fn parse_request(line: &[u8]) -> io::Result<String> {
     let name = std::str::from_utf8(line)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
         .trim()
         .to_lowercase();
-    if name.is_empty() {
+    if name != LIST && !valid_name(&name) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "empty request line",
+            "not a service name",
         ));
     }
     Ok(name)
@@ -95,7 +95,7 @@ pub(super) fn parse_listing(body: &[u8]) -> Vec<String> {
 #[cfg(fuzzing)]
 pub fn fuzz_tunnel(data: &[u8]) {
     if let Ok(request) = parse_request(data) {
-        assert!(!request.is_empty());
+        assert!(request == LIST || valid_name(&request));
     }
     let names = parse_listing(data);
     assert!(names.len() <= MAX_LISTED);
@@ -116,6 +116,8 @@ mod tests {
         assert!(parse_request(b"").is_err());
         assert!(parse_request(b" \r").is_err());
         assert!(parse_request(&[0xff]).is_err());
+        assert!(parse_request(b"a.b").is_err());
+        assert!(parse_request(b"web\x1b[2J").is_err());
     }
 
     #[test]
