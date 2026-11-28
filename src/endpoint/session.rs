@@ -71,7 +71,7 @@ async fn serve(
     let (local, remote) = (tcp.local_addr()?, tcp.peer_addr()?);
     let (reader, mut writer) = tokio::io::split(stream);
     let mut reader = tokio::spawn(read_loop(reader, inbound.clone(), control.clone()));
-    let write = wire::write_frames(&mut writer, outbound);
+    let write = wire::write_frames(&mut writer, outbound, SILENCE_LIMIT);
     tokio::pin!(write);
 
     let mut keepalive = interval_at(Instant::now() + KEEPALIVE, KEEPALIVE);

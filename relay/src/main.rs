@@ -10,7 +10,7 @@ use tokio_rustls::rustls::pki_types::pem::PemObject;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::rustls::{version, ServerConfig};
 
-const USAGE: &str = "usage: natty-relay --cert PEM --key PEM [--listen [::]:443] [--stun [::]:3478] [--cap BYTES_PER_SEC] [--total-cap BYTES_PER_SEC] [--per-ip N]";
+const USAGE: &str = "usage: natty-relay --cert PEM --key PEM [--listen [::]:443] [--stun [::]:3478] [--cap BYTES_PER_SEC] [--total-cap BYTES_PER_SEC] [--per-ip N] [--max-conns N]";
 
 struct Args {
     cert: PathBuf,
@@ -20,6 +20,7 @@ struct Args {
     cap: u32,
     total_cap: u32,
     per_ip: usize,
+    max_conns: usize,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -30,6 +31,7 @@ fn parse_args() -> Result<Args, String> {
     let mut cap = 1 << 20;
     let mut total_cap = 0;
     let mut per_ip = 16;
+    let mut max_conns = 1000;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -42,6 +44,7 @@ fn parse_args() -> Result<Args, String> {
             "--cap" => cap = parse(&flag, &value)?,
             "--total-cap" => total_cap = parse(&flag, &value)?,
             "--per-ip" => per_ip = parse(&flag, &value)?,
+            "--max-conns" => max_conns = parse(&flag, &value)?,
             _ => return Err(format!("unknown flag {flag}")),
         }
     }
@@ -53,6 +56,7 @@ fn parse_args() -> Result<Args, String> {
         cap,
         total_cap,
         per_ip,
+        max_conns,
     })
 }
 
@@ -87,6 +91,7 @@ async fn main() -> io::Result<()> {
         cap: args.cap,
         total_cap: args.total_cap,
         max_conns_per_ip: args.per_ip,
+        max_conns: args.max_conns,
         stun_port: stun.local_addr()?.port(),
     });
     eprintln!(

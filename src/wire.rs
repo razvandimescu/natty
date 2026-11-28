@@ -1,8 +1,10 @@
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
+use tokio::time::timeout;
 use tokio_rustls::rustls::{ConnectionCommon, ProtocolVersion};
 
 use crate::PublicKey;
@@ -221,11 +223,13 @@ pub async fn write_frame<W: AsyncWrite + Unpin>(w: &mut W, frame: &Frame) -> io:
 }
 
 /// Writes frames as they arrive, coalescing whatever is already queued into
-/// one write. Returns when every sender is gone. The buffer is released after
-/// a burst so an idle writer does not hold a maximal frame.
+/// one write. Returns when every sender is gone, or fails when one write
+/// takes longer than `stall`. The buffer is released after a burst so an idle
+/// writer does not hold a maximal frame.
 pub async fn write_frames<W: AsyncWrite + Unpin>(
     writer: &mut W,
     frames: &mut mpsc::Receiver<Frame>,
+    stall: Duration,
 ) -> io::Result<()> {
     let mut buf = Vec::new();
     while let Some(frame) = frames.recv().await {
@@ -235,8 +239,13 @@ pub async fn write_frames<W: AsyncWrite + Unpin>(
             let Ok(next) = frames.try_recv() else { break };
             next.encode(&mut buf);
         }
-        writer.write_all(&buf).await?;
-        writer.flush().await?;
+        let write = async {
+            writer.write_all(&buf).await?;
+            writer.flush().await
+        };
+        timeout(stall, write)
+            .await
+            .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
         if buf.capacity() > WRITE_BUF_RETAINED && frames.is_empty() {
             buf = Vec::new();
         }

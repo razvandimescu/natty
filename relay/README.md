@@ -16,7 +16,7 @@ To build the image yourself, use the target `natty-relay` of the [Dockerfile](ht
 
 ## Run
 
-A relay needs a TLS certificate for its host name or IP address, a TCP port for sessions and a UDP port for STUN. The defaults are TCP 443 and UDP 3478. The peers need only outbound access. The relay accepts a session from any key. To limit its load, use `--cap`, `--total-cap` and `--per-ip`.
+A relay needs a TLS certificate for its host name or IP address, a TCP port for sessions and a UDP port for STUN. The defaults are TCP 443 and UDP 3478. The peers need only outbound access. The relay accepts a session from any key. To limit its load, use `--cap`, `--total-cap`, `--per-ip` and `--max-conns`.
 
 ### Certificate from a public CA
 
@@ -68,6 +68,7 @@ curl --resolve relay.example.net:443:127.0.0.1 https://relay.example.net/health
 | `--cap` | `1048576` (1 MiB/s) | The forwarded bytes per second for each session. 0 removes the cap. |
 | `--total-cap` | `0` | The forwarded bytes per second for all sessions together. 0 removes the cap. |
 | `--per-ip` | `16` | The connection limit for each IPv4 address or IPv6 /64. |
+| `--max-conns` | `1000` | The connection limit for all addresses together. |
 
 The relay reads the certificate files only at start. After you renew the certificate, restart the relay.
 
