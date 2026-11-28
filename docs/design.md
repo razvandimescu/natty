@@ -7,6 +7,7 @@ The reasons for the security rules are in [research.md](research.md#wire-decisio
 - Key: an Ed25519 public key, 32 bytes, z-base-32 in text. Peer address: `<key>@<relay-host>`.
 - Peers use QUIC with TLS 1.3 and RFC 7250 raw public keys (ed25519). The dialer sends no SNI. It accepts only the dialed key. The listener accepts any key.
 - Each side lets its peer open 32 bidirectional streams at once and no unidirectional streams. A further stream waits until another one ends.
+- An endpoint holds at most 64 handshakes that the application has not accepted, with 1 MiB of their packets in total. It drops the Initials of further handshakes.
 - Only allowed keys learn the addresses of an endpoint and get a direct path. A dial allows the dialed key.
 
 ## Relay session (TCP)
