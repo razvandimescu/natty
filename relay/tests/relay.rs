@@ -8,7 +8,7 @@ use natty::tunnel::{self, OpenError, Policy, Status};
 use natty::wire::{self, CloseReason, Frame};
 use natty::{Endpoint, PublicKey, SecretKey};
 use natty_relay::{Config, Relay};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::watch;
 use tokio_rustls::client::TlsStream;
@@ -782,4 +782,52 @@ async fn tunnel_serves_a_granted_key_while_a_stranger_leaves_handshakes_unfinish
         .await
         .expect("the granted key was refused");
     assert!(tunnel::list(&conn).await.unwrap().is_empty());
+}
+
+fn splice(near: Session, near_dst: PublicKey, far: Session, far_dst: PublicKey) {
+    let (near_rx, near_tx) = tokio::io::split(near);
+    let (far_rx, far_tx) = tokio::io::split(far);
+    tokio::spawn(resend(near_rx, far_tx, far_dst));
+    tokio::spawn(resend(far_rx, near_tx, near_dst));
+}
+
+async fn resend(mut from: ReadHalf<Session>, mut to: WriteHalf<Session>, dst: PublicKey) {
+    while let Ok(frame) = wire::read_frame(&mut from).await {
+        if let Frame::Recv { data, .. } = frame {
+            if wire::write_frame(&mut to, &Frame::Send { dst, data })
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn tunnel_closes_a_connection_whose_key_did_not_send_its_initials() {
+    let (h, other) = (start(0, 16).await, start(0, 16).await);
+    let host_secret = SecretKey::generate();
+    let host_key = host_secret.public();
+    let host = bound(&h, SecretKey::from_seed(*host_secret.seed()), tunnel::ALPN).await;
+    let friend = bound(&other, SecretKey::generate(), tunnel::ALPN).await;
+    let (_policy, rx) = watch::channel(Policy {
+        grants: grants(friend.public_key(), &[]),
+        ..Policy::default()
+    });
+    tokio::spawn(async move { tunnel::serve(&host, rx).await });
+
+    let stand_in = connect(&other, &host_secret).await;
+    let stranger = connect(&h, &SecretKey::generate()).await;
+    splice(stand_in, friend.public_key(), stranger, host_key);
+
+    let conn = tunnel::dial(&friend, host_key).await.unwrap();
+    let closed = tokio::time::timeout(Duration::from_secs(5), conn.closed())
+        .await
+        .expect("the host served a key that did not send its Initials");
+    assert!(matches!(
+        closed,
+        natty::quinn::ConnectionError::ApplicationClosed(close)
+            if close.error_code == natty::quinn::VarInt::from_u32(1)
+    ));
 }
