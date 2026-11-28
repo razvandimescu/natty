@@ -45,7 +45,7 @@ Session rules:
 - Epoch: the start time of the relay in Unix nanoseconds. A new epoch after a reconnect means that all peers are gone.
 - An idle client sends PING every 15 s. The relay closes a session that is silent for 60 s with CLOSE 3. Each side answers PING with PONG.
 - The relay closes a session when one write to it takes longer than 10 s. A client gives up on a write after 45 s.
-- Cap: the datagram bytes per second that a session can send. The relay drops the excess.
+- Cap: the bytes per second that a session can send in SEND frames, the 32-byte key included. The relay drops the excess.
 
 ## STUN responder (UDP)
 

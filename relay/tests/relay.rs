@@ -261,6 +261,28 @@ async fn cap_drops_excess_instead_of_queueing() {
 }
 
 #[tokio::test]
+async fn cap_charges_the_key_of_an_empty_datagram() {
+    let h = start(1000, 16).await;
+    let (a, b) = (SecretKey::generate(), SecretKey::generate());
+    let mut sa = connect(&h, &a).await;
+    let _sb = connect(&h, &b).await;
+
+    for _ in 0..128 {
+        send(
+            &mut sa,
+            Frame::Send {
+                dst: b.public(),
+                data: Vec::new(),
+            },
+        )
+        .await;
+    }
+    sync(&mut sa).await;
+    let body = get(&h, "/health").await;
+    assert!(!body.contains("\ndropped_frames 0\n"), "{body}");
+}
+
+#[tokio::test]
 async fn total_cap_is_shared_by_all_sessions() {
     let h = start_capped(0, 1000, 16).await;
     let (a, b) = (SecretKey::generate(), SecretKey::generate());
