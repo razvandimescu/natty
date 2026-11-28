@@ -276,7 +276,7 @@ async fn run_session(
     let reason = loop {
         tokio::select! {
             _ = &mut kill => break CloseReason::Replaced,
-            _ = &mut writer => break CloseReason::Normal,
+            () = tx.closed() => break CloseReason::Normal,
             read = timeout(IDLE_TIMEOUT, wire::read_frame(&mut reader)) => match read {
                 Err(_) => break CloseReason::Idle,
                 Ok(Err(e)) if e.kind() == io::ErrorKind::InvalidData => break CloseReason::Protocol,
@@ -301,7 +301,7 @@ async fn run_session(
     }
     let _ = tx.try_send(Frame::Close(reason));
     drop(tx);
-    if !writer.is_finished() && timeout(CLOSE_LINGER, &mut writer).await.is_err() {
+    if timeout(CLOSE_LINGER, &mut writer).await.is_err() {
         writer.abort();
     }
 }
@@ -376,7 +376,7 @@ mod tests {
     use tokio_rustls::rustls::crypto::ring;
     use tokio_rustls::rustls::server::ResolvesServerCertUsingSni;
 
-    fn relay(max_conns_per_ip: usize, max_conns: usize) -> Relay {
+    fn relay() -> Relay {
         let tls = ServerConfig::builder_with_provider(Arc::new(ring::default_provider()))
             .with_safe_default_protocol_versions()
             .unwrap()
@@ -386,15 +386,15 @@ mod tests {
             tls: Arc::new(tls),
             cap: 0,
             total_cap: 0,
-            max_conns_per_ip,
-            max_conns,
+            max_conns_per_ip: 1,
+            max_conns: 2,
             stun_port: 0,
         })
     }
 
     #[test]
     fn health_shows_counters_only_to_loopback() {
-        let relay = relay(1, 1);
+        let relay = relay();
         assert_eq!(relay.state.health("192.0.2.1".parse().unwrap()), "ok\n");
         assert!(relay
             .state
@@ -404,7 +404,7 @@ mod tests {
 
     #[test]
     fn connections_past_the_total_limit_are_refused() {
-        let relay = relay(16, 2);
+        let relay = relay();
         let ip = |last: u8| IpAddr::from([192, 0, 2, last]);
         let held = [ip(1), ip(2)].map(|ip| ConnGuard::acquire(&relay.state, ip).unwrap());
         assert!(ConnGuard::acquire(&relay.state, ip(3)).is_none());

@@ -299,33 +299,29 @@ async fn session_that_stops_reading_is_closed() {
         send(&mut sa, datagram.clone()).await;
     }
 
-    let started = std::time::Instant::now();
-    loop {
-        send(
-            &mut sa,
-            Frame::Send {
-                dst: b.public(),
-                data: vec![1],
-            },
-        )
-        .await;
-        send(&mut sa, Frame::Ping([1; 8])).await;
-        let gone = loop {
-            match next(&mut sa).await {
-                Frame::PeerGone(key) => break key == b.public(),
-                Frame::Pong(_) => break false,
-                _ => {}
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            send(
+                &mut sa,
+                Frame::Send {
+                    dst: b.public(),
+                    data: vec![1],
+                },
+            )
+            .await;
+            send(&mut sa, Frame::Ping([1; 8])).await;
+            loop {
+                match next(&mut sa).await {
+                    Frame::PeerGone(key) if key == b.public() => return,
+                    Frame::Pong(_) => break,
+                    _ => {}
+                }
             }
-        };
-        if gone {
-            return;
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        assert!(
-            started.elapsed() < Duration::from_secs(30),
-            "the relay kept a session that stopped reading"
-        );
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
+    })
+    .await
+    .expect("the relay kept a session that stopped reading");
 }
 
 #[tokio::test]

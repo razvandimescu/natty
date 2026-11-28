@@ -239,13 +239,11 @@ pub async fn write_frames<W: AsyncWrite + Unpin>(
             let Ok(next) = frames.try_recv() else { break };
             next.encode(&mut buf);
         }
-        let write = async {
+        timeout(stall, async {
             writer.write_all(&buf).await?;
             writer.flush().await
-        };
-        timeout(stall, write)
-            .await
-            .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
+        })
+        .await??;
         if buf.capacity() > WRITE_BUF_RETAINED && frames.is_empty() {
             buf = Vec::new();
         }
